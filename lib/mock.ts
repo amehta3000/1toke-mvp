@@ -30,6 +30,8 @@ export function mockAnalyze(question: string, prefs: Preferences): StrainReport 
   return {
     strainName: name.slice(0, 42),
     brand: 'Mock mode (no API key)',
+    brandNotes: 'Demo brand intel: with a real API key this line covers reputation, how established they are, and anything notable.',
+    strainType: 'Hybrid — sativa-leaning',
     productType: 'Flower / pre-roll',
     cannabinoids: 'Unknown until label is scanned clearly',
     terpenes: prefs.citrus ? ['limonene', 'pinene', 'caryophyllene'] : ['caryophyllene', 'linalool'],

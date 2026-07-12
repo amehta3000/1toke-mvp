@@ -10,6 +10,7 @@ import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
 import DiscoverTab from './components/DiscoverTab';
 import ProfileTab from './components/ProfileTab';
+import InstallPrompt from './components/InstallPrompt';
 
 const storageKey = '1toke:prefs';
 const onboardedKey = '1toke:onboarded';
@@ -111,6 +112,14 @@ export default function Page() {
     if (preview) URL.revokeObjectURL(preview);
     setImage(file);
     setPreview(file ? URL.createObjectURL(file) : null);
+  }
+
+  // "Done with it": wipe the card and reset the scan inputs for the next product.
+  function clearReport() {
+    setReport(null);
+    setAnalyzeError(null);
+    setQuestion('');
+    onImage(null);
   }
 
   async function analyze() {
@@ -240,8 +249,10 @@ export default function Page() {
       </div>
 
       {report && (report.confidence === 'low'
-        ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} />
-        : <ReportCard report={report} onSave={saveReport} saving={saving} />)}
+        ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
+        : <ReportCard report={report} onSave={saveReport} saving={saving} onDismiss={clearReport} />)}
+
+      {!report && <InstallPrompt />}
     </div>}
 
     {tab === 'journal' && <JournalTab
