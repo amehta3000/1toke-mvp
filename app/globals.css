@@ -69,6 +69,7 @@ p { margin: 0; color: var(--muted); line-height: 1.45; }
   background: var(--panel2); color: var(--muted); font-weight: 900; flex-shrink: 0;
   align-self: flex-start;
 }
+.install { border-color: rgba(215,255,85,.25); }
 .input, textarea {
   width: 100%;
   border: 1px solid var(--line);

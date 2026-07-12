@@ -10,6 +10,7 @@ import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
 import DiscoverTab from './components/DiscoverTab';
 import ProfileTab from './components/ProfileTab';
+import InstallPrompt from './components/InstallPrompt';
 
 const storageKey = '1toke:prefs';
 const onboardedKey = '1toke:onboarded';
@@ -250,6 +251,8 @@ export default function Page() {
       {report && (report.confidence === 'low'
         ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
         : <ReportCard report={report} onSave={saveReport} saving={saving} onDismiss={clearReport} />)}
+
+      {!report && <InstallPrompt />}
     </div>}
 
     {tab === 'journal' && <JournalTab
