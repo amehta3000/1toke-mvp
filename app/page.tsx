@@ -6,6 +6,73 @@ import { Preferences, StrainReport } from '@/lib/types';
 
 const storageKey = '1toke:prefs';
 
+function toDisplayText(value: unknown, fallback = 'Unknown'): string {
+  if (value == null) return fallback;
+  if (typeof value === 'string') return value.trim() || fallback;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    const parts = value.map(v => toDisplayText(v, '')).filter(Boolean);
+    return parts.length ? parts.join(', ') : fallback;
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => {
+        const normalized = toDisplayText(v, '').trim();
+        return normalized ? `${k.toUpperCase()}: ${normalized}` : '';
+      })
+      .filter(Boolean);
+    return entries.length ? entries.join(', ') : fallback;
+  }
+  return fallback;
+}
+
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(v => toDisplayText(v, '')).map(s => s.trim()).filter(Boolean);
+  if (value == null) return [];
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => {
+        const normalized = toDisplayText(v, '').trim();
+        return normalized ? `${k}: ${normalized}` : k;
+      })
+      .filter(Boolean);
+  }
+  const one = toDisplayText(value, '').trim();
+  return one ? [one] : [];
+}
+
+function toScore(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 50;
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function normalizeReport(input: any): StrainReport {
+  const decision = input?.buyDecision === 'Buy' || input?.buyDecision === 'Maybe' || input?.buyDecision === 'Skip'
+    ? input.buyDecision
+    : 'Maybe';
+  const confidence = input?.confidence === 'low' || input?.confidence === 'medium' || input?.confidence === 'high'
+    ? input.confidence
+    : 'medium';
+
+  return {
+    strainName: toDisplayText(input?.strainName, 'Unknown strain'),
+    brand: toDisplayText(input?.brand, 'Unknown'),
+    productType: toDisplayText(input?.productType, 'Unknown'),
+    cannabinoids: toDisplayText(input?.cannabinoids, 'Unknown'),
+    terpenes: toStringList(input?.terpenes),
+    matchScore: toScore(input?.matchScore),
+    buyDecision: decision,
+    quickTake: toDisplayText(input?.quickTake, 'No quick take available.'),
+    expectedEffects: toStringList(input?.expectedEffects),
+    watchOuts: toStringList(input?.watchOuts),
+    bestFor: toStringList(input?.bestFor),
+    dosingGuidance: toDisplayText(input?.dosingGuidance, 'Start low and go slow.'),
+    confidence,
+    missingInfo: toStringList(input?.missingInfo)
+  };
+}
+
 export default function Page() {
   const [tab, setTab] = useState<'scan'|'journal'|'discover'|'profile'>('scan');
   const [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
@@ -13,6 +80,9 @@ export default function Page() {
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [report, setReport] = useState<StrainReport | null>(null);
+  const [searchAttempted, setSearchAttempted] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [analyzeError, setAnalyzeError] = useState<{ message: string; details?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [journal, setJournal] = useState({ feelings: [] as string[], rating: 4, notes: '' });
 
@@ -34,15 +104,42 @@ export default function Page() {
   async function analyze() {
     setBusy(true);
     setReport(null);
-    const form = new FormData();
-    form.set('question', question);
-    form.set('preferences', JSON.stringify(prefs));
-    if (image) form.set('image', image);
-    const res = await fetch('/api/analyze', { method: 'POST', body: form });
-    const data = await res.json();
-    setReport(data.report);
-    setTab('scan');
-    setBusy(false);
+    setAnalyzeError(null);
+
+    try {
+      const form = new FormData();
+      form.set('question', question);
+      form.set('preferences', JSON.stringify(prefs));
+      if (image) form.set('image', image);
+
+      const res = await fetch('/api/analyze', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const message = data?.error?.message || 'Analysis failed. Please try again.';
+        const details = [
+          data?.error?.code ? `code=${data.error.code}` : '',
+          data?.error?.requestId ? `requestId=${data.error.requestId}` : '',
+          data?.error?.hint ? data.error.hint : ''
+        ].filter(Boolean).join(' | ');
+        setAnalyzeError({ message, details });
+        return;
+      }
+
+      if (!data?.report) {
+        setAnalyzeError({ message: 'No report was returned. Please try again.' });
+        return;
+      }
+
+      setReport(normalizeReport(data.report));
+      setSearchAttempted(data.searchAttempted || false);
+      setSearchTerm(data.searchLabel || data.searchTerm || '');
+      setTab('scan');
+    } catch {
+      setAnalyzeError({ message: 'Network error while analyzing. Check your connection and try again.' });
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveReport() {
@@ -55,7 +152,7 @@ export default function Page() {
 
   return <main className="app">
     <section className="hero">
-      <div className="kicker">1Toke MVP</div>
+      <div className="kicker">1Toke</div>
       <h1>Scan before you buy.</h1>
       <p>Upload a label or ask about a strain. Get a fast, personal match score and a plain-English buying decision.</p>
     </section>
@@ -70,10 +167,18 @@ export default function Page() {
           <textarea value={question} onChange={e => setQuestion(e.target.value)} placeholder="Example: CBX L'Orange 29% THC. Is this good for creative daytime vibes?" />
         </label>
         <button className="primary" onClick={analyze} disabled={busy}>{busy ? 'Analyzing…' : 'Get buying advice'}</button>
+        {analyzeError && <div className="card stack" role="alert" aria-live="polite">
+          <div className="kicker">Could not complete analysis</div>
+          <p><b>{analyzeError.message}</b></p>
+          {analyzeError.details && <details>
+            <summary>Debug details</summary>
+            <p className="small">{analyzeError.details}</p>
+          </details>}
+        </div>}
         <div className="small">Current tuning: {activeWants.join(' · ') || 'neutral'} · intensity {prefs.intensity}</div>
       </div>
 
-      {report && <ReportCard report={report} onSave={saveReport} />}
+      {report && (report.confidence === 'low' ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} /> : <ReportCard report={report} onSave={saveReport} />)}
     </div>}
 
     {tab === 'journal' && <div className="card stack">
@@ -107,6 +212,20 @@ export default function Page() {
       {(['scan','journal','discover','profile'] as const).map(t => <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{t}</button>)}
     </nav>
   </main>;
+}
+
+function LowConfidenceCard({ report, searchAttempted, searchTerm }: { report: StrainReport; searchAttempted: boolean; searchTerm: string }) {
+  return <div className="card stack">
+    <div className="pillline"><div><div className="kicker">❓ NEED MORE INFO</div><h2>Can't quite help yet</h2></div></div>
+    {searchAttempted && <p className="small" style={{color: 'var(--warn)'}}>🔍 Searched for "{searchTerm}" but didn't find specific product info.</p>}
+    <p><b>You're being a bit too vague! I need more details to give you solid advice.</b></p>
+    <div className="metric"><b>You told me:</b><span>{report.quickTake || 'just vibes, no specifics'}</span></div>
+    {report.missingInfo && report.missingInfo.length > 0 && <div className="stack">
+      <h3>To help you better, please provide:</h3>
+      <div className="chips">{report.missingInfo.map((info, i) => <span key={i} className="chip">📸 {info}</span>)}</div>
+    </div>}
+    <p className="small" style={{color: 'var(--warn)'}}>💡 <b>Pro tip:</b> Upload a clear photo of the product label/packaging, or give me a specific strain name + THC/CBD %. That's when I can actually help.</p>
+  </div>;
 }
 
 function ReportCard({ report, onSave }: { report: StrainReport; onSave: () => void }) {

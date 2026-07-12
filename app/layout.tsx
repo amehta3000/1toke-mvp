@@ -1,7 +1,7 @@
 import './globals.css';
 
 export const metadata = {
-  title: '1Toke MVP',
+  title: '1Toke',
   description: 'Fast personal strain buying assistant and journal'
 };
 
