@@ -63,6 +63,12 @@ p { margin: 0; color: var(--muted); line-height: 1.45; }
   font-weight: 800;
 }
 .secondary.selected { background: var(--accent); color: #111; border-color: transparent; }
+.secondary.ghost { background: transparent; color: var(--muted); flex: 0 0 auto; }
+.dismiss {
+  width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--panel2); color: var(--muted); font-weight: 900; flex-shrink: 0;
+  align-self: flex-start;
+}
 .input, textarea {
   width: 100%;
   border: 1px solid var(--line);
