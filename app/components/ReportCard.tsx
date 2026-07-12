@@ -8,6 +8,19 @@ const decisionMeta: Record<StrainReport['buyDecision'], { phrase: string; emoji:
   Skip: { phrase: 'Skip it', emoji: '🚫', colorVar: 'var(--bad)' }
 };
 
+function TypeBadge({ strainType }: { strainType?: string }) {
+  if (!strainType) return null;
+  const lower = strainType.toLowerCase();
+  const kind = lower.includes('indica') && lower.includes('sativa') ? 'hybrid'
+    : lower.includes('sativa') ? 'sativa'
+    : lower.includes('indica') ? 'indica'
+    : lower.includes('hybrid') ? 'hybrid'
+    : null;
+  if (!kind) return null;
+  const icon = kind === 'sativa' ? '🌞' : kind === 'indica' ? '🌙' : '🌗';
+  return <span className={`typebadge ${kind}`}>{icon} {strainType}</span>;
+}
+
 export function ReportCard({ report, onSave, saving, onDismiss }: { report: StrainReport; onSave: () => void; saving?: boolean; onDismiss: () => void }) {
   const meta = decisionMeta[report.buyDecision];
   return <div className="card stack">
@@ -15,12 +28,14 @@ export function ReportCard({ report, onSave, saving, onDismiss }: { report: Stra
       <div>
         <div className="kicker" style={{ color: meta.colorVar }}>{meta.emoji} {meta.phrase}</div>
         <h2>{report.strainName}</h2>
+        <TypeBadge strainType={report.strainType} />
       </div>
       <div className="score" style={{ '--score': report.matchScore, '--ring': meta.colorVar } as any}><span>{report.matchScore}</span></div>
     </div>
     <p style={{ color: meta.colorVar }}><b>{report.quickTake}</b></p>
     {report.whyThisScore && <p className="small why">📈 {report.whyThisScore}</p>}
     <div className="metric"><b>Brand / type</b><span>{report.brand || 'Unknown'} · {report.productType || 'Unknown'}</span></div>
+    {report.brandNotes && <p className="small brandnotes">🏷 {report.brandNotes}</p>}
     <div className="metric"><b>Cannabinoids</b><span>{report.cannabinoids || 'Unknown'}</span></div>
     <div className="metric"><b>Terpenes</b><span>{report.terpenes?.join(', ') || 'Unknown'}</span></div>
     {report.expectedEffects.length > 0 && <><h3>Expect</h3><div className="chips">{report.expectedEffects.map(x => <span className="chip active" key={x}>{x}</span>)}</div></>}

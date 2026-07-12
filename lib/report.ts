@@ -56,6 +56,8 @@ export function normalizeReport(input: any): StrainReport {
   return {
     strainName: toDisplayText(input?.strainName, 'Unknown strain'),
     brand: toDisplayText(input?.brand, 'Unknown'),
+    brandNotes: toDisplayText(input?.brandNotes, ''),
+    strainType: toDisplayText(input?.strainType, ''),
     productType: toDisplayText(input?.productType, 'Unknown'),
     cannabinoids: toDisplayText(input?.cannabinoids, 'Unknown'),
     terpenes: toStringList(input?.terpenes),

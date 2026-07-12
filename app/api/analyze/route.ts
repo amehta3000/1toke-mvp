@@ -13,6 +13,8 @@ function scrubHallucinations(report: any): any {
     return {
       strainName: 'Unknown',
       brand: '',
+      brandNotes: '',
+      strainType: '',
       productType: '',
       cannabinoids: '', // Don't make up THC/CBD %
       terpenes: [],    // Don't make up terpene profiles
@@ -230,6 +232,12 @@ ${historyDigest}
 
 If the product resembles something they logged (same strain, terpene profile, or potency band), say so explicitly in quickTake or whyThisScore, e.g. "Same limonene-heavy profile as L'Orange, which you rated 5/5." Low-rated history with a similar profile should drag the score down and show up in watchOuts.` : ''}
 
+STRAIN TYPE:
+- strainType: one of "Sativa", "Indica", "Hybrid — sativa-leaning", "Hybrid — indica-leaning", "Hybrid — balanced", or "" if you genuinely don't know. Use the label or well-documented lineage; do not guess from the name alone.
+
+BRAND INTEL:
+- brandNotes: 1–2 short, useful sentences about the brand ONLY if you actually recognize it — reputation (well-regarded, budget shelf, premium), how established they are, and anything genuinely notable (solventless extraction, single-farm flower, known for accurate labeling, etc.). Same honest voice as quickTake. If you don't recognize the brand, return "" — never invent a reputation.
+
 🚫 STRICT NO-HALLUCINATION RULE:
 If you do not have CONCRETE information, DO NOT INCLUDE IT. Don't guess, don't infer, don't use generic knowledge:
 - If you don't know the THC/CBD %, set cannabinoids to empty string ""
@@ -237,6 +245,8 @@ If you do not have CONCRETE information, DO NOT INCLUDE IT. Don't guess, don't i
 - If you don't know effects, return empty array []
 - If you don't see a product name/label, set strainName to "Unknown"
 - If unsure about effects, effects should be EMPTY not speculated
+- If you don't recognize the brand, brandNotes must be ""
+- If the sativa/indica leaning isn't on the label or well documented, strainType must be ""
 
 CONFIDENCE LEVELS:
 - HIGH: You found actual product name, real label with THC/CBD %, terpene data, verified effects. Confidence ONLY if you have concrete details.
@@ -253,12 +263,12 @@ When confidence is LOW, set these fields explicitly:
 - buyDecision: "Maybe"
 - missingInfo: List exactly what data you need (e.g., "strain name", "THC percentage from label", "product label photo")
 
-Return JSON with: strainName, brand, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array.`;
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array.`;
 
   const userText = `Analyze this product/strain for a quick in-store buying decision.
 Question or typed label: ${question}
 User preference toggles: ${JSON.stringify(prefs)}
-Return JSON with: strainName, brand, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array.`;
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array.`;
 
   const input: any[] = [{ role: 'system', content: system }];
   input.push({

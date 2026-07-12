@@ -13,6 +13,8 @@ export type Preferences = Record<PreferenceKey, boolean> & {
 export type StrainReport = {
   strainName: string;
   brand?: string;
+  brandNotes?: string;
+  strainType?: string;
   productType?: string;
   cannabinoids?: string;
   terpenes?: string[];

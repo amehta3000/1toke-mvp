@@ -70,6 +70,14 @@ p { margin: 0; color: var(--muted); line-height: 1.45; }
   align-self: flex-start;
 }
 .install { border-color: rgba(215,255,85,.25); }
+.typebadge {
+  display: inline-block; margin-top: 8px; padding: 5px 11px; border-radius: 999px;
+  font-size: 12px; font-weight: 800; border: 1px solid;
+}
+.typebadge.sativa { color: var(--accent2); border-color: rgba(110,231,183,.4); background: rgba(110,231,183,.08); }
+.typebadge.indica { color: #c4b0ff; border-color: rgba(196,176,255,.4); background: rgba(196,176,255,.08); }
+.typebadge.hybrid { color: var(--warn); border-color: rgba(255,209,102,.4); background: rgba(255,209,102,.08); }
+.brandnotes { border-left: 3px solid var(--line); padding-left: 10px; }
 .input, textarea {
   width: 100%;
   border: 1px solid var(--line);
