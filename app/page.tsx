@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { chipGroups, defaultPreferences, labels } from '@/lib/defaults';
 import { Preferences, StrainReport } from '@/lib/types';
+import { getDeviceId, safeGet, safeSet } from '@/lib/storage';
 
 const storageKey = '1toke:prefs';
 
@@ -85,12 +86,30 @@ export default function Page() {
   const [analyzeError, setAnalyzeError] = useState<{ message: string; details?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [journal, setJournal] = useState({ feelings: [] as string[], rating: 4, notes: '' });
+  const [deviceId, setDeviceId] = useState('');
+  const [savedReports, setSavedReports] = useState<any[]>([]);
+
+  async function loadSavedReports(id: string) {
+    if (!id) return;
+    try {
+      const res = await fetch(`/api/reports?deviceId=${encodeURIComponent(id)}`);
+      const data = await res.json().catch(() => ({}));
+      setSavedReports(Array.isArray(data.reports) ? data.reports : []);
+    } catch {
+      // Offline or DB unavailable: keep whatever we have.
+    }
+  }
 
   useEffect(() => {
-    const saved = localStorage.getItem(storageKey);
-    if (saved) setPrefs({ ...defaultPreferences, ...JSON.parse(saved) });
+    const saved = safeGet(storageKey);
+    if (saved) {
+      try { setPrefs({ ...defaultPreferences, ...JSON.parse(saved) }); } catch { /* ignore corrupt */ }
+    }
+    const id = getDeviceId();
+    setDeviceId(id);
+    loadSavedReports(id);
   }, []);
-  useEffect(() => { localStorage.setItem(storageKey, JSON.stringify(prefs)); }, [prefs]);
+  useEffect(() => { safeSet(storageKey, JSON.stringify(prefs)); }, [prefs]);
 
   function toggle(key: keyof Preferences) {
     setPrefs(p => ({ ...p, [key]: !p[key] }));
@@ -144,8 +163,24 @@ export default function Page() {
 
   async function saveReport() {
     if (!report) return;
-    await fetch('/api/reports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ report, journal }) });
-    alert('Saved to journal');
+    try {
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ report, journal, deviceId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data?.saved) {
+        await loadSavedReports(deviceId);
+        alert('Saved to journal');
+      } else if (data?.localOnly) {
+        alert('Saved locally (database not configured)');
+      } else {
+        alert('Could not save. Please try again.');
+      }
+    } catch {
+      alert('Network error while saving. Please try again.');
+    }
   }
 
   const activeWants = useMemo(() => Object.entries(prefs).filter(([k,v]) => v === true && !k.startsWith('avoid')).map(([k]) => labels[k]).filter(Boolean).slice(0, 5), [prefs]);
@@ -194,6 +229,20 @@ export default function Page() {
         <textarea value={journal.notes} onChange={e => setJournal(j => ({...j, notes: e.target.value}))} placeholder="Comedown? duration? would buy again?" />
       </label>
       <button className="primary" onClick={saveReport} disabled={!report}>Save current report</button>
+
+      <div className="stack">
+        <h3>Your saved entries {savedReports.length > 0 && <span className="small">({savedReports.length})</span>}</h3>
+        {savedReports.length === 0 && <p className="small">No saved sessions yet on this device. Save a report to start your journal.</p>}
+        {savedReports.map((r: any) => {
+          const rep = r.report || {};
+          const jr = r.journal || {};
+          const when = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+          return <div key={r.id} className="metric">
+            <b>{typeof rep.strainName === 'string' ? rep.strainName : 'Saved report'}</b>
+            <span>{[jr.rating ? `${jr.rating}/5` : '', Array.isArray(jr.feelings) ? jr.feelings.join(', ') : '', when].filter(Boolean).join(' · ')}</span>
+          </div>;
+        })}
+      </div>
     </div>}
 
     {tab === 'discover' && <div className="card stack">
