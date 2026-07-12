@@ -7,9 +7,11 @@ A phone-first buying assistant and personal preference journal for cannabis prod
 - Upload or take a photo of a package/menu/label.
 - Ask a quick question about a strain.
 - Returns a personal buying decision: Buy / Maybe / Skip.
-- Shows match score, expected effects, watch-outs, dose guidance, and missing info.
-- Preference toggles feel like a playful tuning board.
-- Journal saves simple session feedback.
+- Shows match score, a "why this score" line, expected effects, best-for ideas, watch-outs, dose guidance, and missing info.
+- First-run onboarding builds the taste profile in ~30 seconds; preference toggles stay editable in Profile.
+- Journal: save products you bought, then log sessions against them later (feelings, star rating, buy-again, notes) — multiple sessions per product.
+- The analyze endpoint feeds your last 10 logged sessions back into the model, so reports get more personal as the journal grows.
+- Discover computes real patterns from your logs: repeat-worthy strains, terpene wins, and duds to dodge.
 - Works in mock mode without API keys.
 
 ## Run locally
@@ -34,7 +36,7 @@ The app uses the OpenAI Responses API with image input.
 
 ## Enable database saves
 
-Create a Supabase project, run `supabase-schema.sql`, then add:
+Create a Supabase project, run `supabase-schema.sql` (re-run it after pulling this version — it adds a `sessions` table for journal logs), then add:
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=...

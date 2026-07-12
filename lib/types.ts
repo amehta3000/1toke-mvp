@@ -19,10 +19,29 @@ export type StrainReport = {
   matchScore: number;
   buyDecision: 'Buy' | 'Maybe' | 'Skip';
   quickTake: string;
+  whyThisScore?: string;
   expectedEffects: string[];
   watchOuts: string[];
   bestFor: string[];
   dosingGuidance: string;
   confidence: 'low' | 'medium' | 'high';
   missingInfo?: string[];
+};
+
+export type SessionLog = {
+  id: string;
+  created_at: string;
+  report_id: string | null;
+  strain_name: string;
+  rating: number | null;
+  feelings: string[] | null;
+  notes: string | null;
+  would_buy_again: boolean | null;
+};
+
+export type SavedReport = {
+  id: string;
+  created_at: string;
+  report: Partial<StrainReport> | null;
+  journal: unknown;
 };
