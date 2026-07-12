@@ -1,12 +1,35 @@
 import { Preferences, StrainReport } from './types';
 
 export function mockAnalyze(question: string, prefs: Preferences): StrainReport {
-  const name = question?.trim() || 'Unknown Sativa Hybrid';
+  const q = question?.trim() || '';
+  // Specific enough to demo the full report card: a THC/CBD % or a multi-word name.
+  const hasSpecifics = /\d+\s*%/.test(q) || q.split(/\s+/).length >= 2;
+  const name = q || 'Unknown Sativa Hybrid';
   const wantsBright = prefs.creative || prefs.social || prefs.euphoric;
   const score = wantsBright ? 82 : 68;
+
+  if (!hasSpecifics) {
+    return {
+      strainName: 'Unknown',
+      brand: '',
+      productType: '',
+      cannabinoids: '',
+      terpenes: [],
+      matchScore: 50,
+      buyDecision: 'Maybe',
+      quickTake: q || 'just vibes, no specifics',
+      expectedEffects: [],
+      watchOuts: [],
+      bestFor: [],
+      dosingGuidance: 'Cannot provide dosing guidance without product information.',
+      confidence: 'low',
+      missingInfo: ['clear THC/CBD values', 'terpene panel', 'strain or product name']
+    };
+  }
+
   return {
     strainName: name.slice(0, 42),
-    brand: 'Photo/question mode',
+    brand: 'Mock mode (no API key)',
     productType: 'Flower / pre-roll',
     cannabinoids: 'Unknown until label is scanned clearly',
     terpenes: prefs.citrus ? ['limonene', 'pinene', 'caryophyllene'] : ['caryophyllene', 'linalool'],
@@ -15,11 +38,14 @@ export function mockAnalyze(question: string, prefs: Preferences): StrainReport 
     quickTake: score >= 80
       ? 'Looks aligned with an uplifting, creative, social session. Good candidate if you want daytime energy without getting too heavy.'
       : 'Could work, but I would want clearer terpene and THC info before buying.',
+    whyThisScore: wantsBright
+      ? 'Citrus-forward terpenes line up with your creative/social lean — docked a few points for the missing THC data.'
+      : 'Neutral profile match; without your bright-effect toggles on, this reads as a coin flip.',
     expectedEffects: ['uplifted mood', 'creative headspace', 'light social energy'],
     watchOuts: ['Start low if THC is over 28%', 'Avoid if dominant terpene is myrcene and you want to stay active'],
     bestFor: ['daytime walk', 'music making', 'social hang'],
     dosingGuidance: 'Try 1–2 small tokes, wait 10–15 minutes, then decide. Do not judge it from THC % alone.',
-    confidence: 'low',
+    confidence: 'medium',
     missingInfo: ['clear THC/CBD values', 'terpene panel', 'package date']
   };
 }

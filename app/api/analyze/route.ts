@@ -1,89 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import { z } from 'zod';
 import { mockAnalyze } from '@/lib/mock';
+import { normalizeReport, toDisplayText } from '@/lib/report';
+import { getSupabaseAdmin } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
-
-function toDisplayText(value: unknown, fallback = 'Unknown'): string {
-  if (value == null) return fallback;
-  if (typeof value === 'string') return value.trim() || fallback;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    const parts = value
-      .map(v => toDisplayText(v, ''))
-      .map(s => s.trim())
-      .filter(Boolean);
-    return parts.length ? parts.join(', ') : fallback;
-  }
-  if (typeof value === 'object') {
-    const parts = Object.entries(value as Record<string, unknown>)
-      .map(([k, v]) => {
-        const normalized = toDisplayText(v, '').trim();
-        return normalized ? `${k.toUpperCase()}: ${normalized}` : '';
-      })
-      .filter(Boolean);
-    return parts.length ? parts.join(', ') : fallback;
-  }
-  return fallback;
-}
-
-function toStringList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.map(v => toDisplayText(v, '')).map(s => s.trim()).filter(Boolean);
-  }
-  if (value == null) return [];
-  if (typeof value === 'object') {
-    return Object.entries(value as Record<string, unknown>)
-      .map(([k, v]) => {
-        const normalized = toDisplayText(v, '').trim();
-        return normalized ? `${k}: ${normalized}` : k;
-      })
-      .filter(Boolean);
-  }
-  const one = toDisplayText(value, '').trim();
-  return one ? [one] : [];
-}
-
-function toScore(value: unknown): number {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 50;
-  return Math.max(0, Math.min(100, Math.round(numeric)));
-}
-
-const buyDecisionSchema = z.preprocess((v) => {
-  if (v === 'Buy' || v === 'Maybe' || v === 'Skip') return v;
-  return 'Maybe';
-}, z.enum(['Buy', 'Maybe', 'Skip']));
-
-const confidenceSchema = z.preprocess((v) => {
-  if (v === 'low' || v === 'medium' || v === 'high') return v;
-  return 'medium';
-}, z.enum(['low', 'medium', 'high']));
-
-const reportSchema = z.preprocess(
-  (value) => (value && typeof value === 'object' ? value : {}),
-  z.object({
-    strainName: z.preprocess((v) => toDisplayText(v, 'Unknown strain'), z.string()),
-    brand: z.preprocess((v) => toDisplayText(v, 'Unknown'), z.string()).optional(),
-    productType: z.preprocess((v) => toDisplayText(v, 'Unknown'), z.string()).optional(),
-    cannabinoids: z.preprocess((v) => toDisplayText(v, 'Unknown'), z.string()).optional(),
-    terpenes: z.preprocess(toStringList, z.array(z.string())).default([]),
-    matchScore: z.preprocess(toScore, z.number().int().min(0).max(100)),
-    buyDecision: buyDecisionSchema,
-    quickTake: z.preprocess((v) => toDisplayText(v, 'No quick take available.'), z.string()),
-    expectedEffects: z.preprocess(toStringList, z.array(z.string())).default([]),
-    watchOuts: z.preprocess(toStringList, z.array(z.string())).default([]),
-    bestFor: z.preprocess(toStringList, z.array(z.string())).default([]),
-    dosingGuidance: z.preprocess((v) => toDisplayText(v, 'Start low and go slow.'), z.string()),
-    confidence: confidenceSchema,
-    missingInfo: z.preprocess(toStringList, z.array(z.string())).optional()
-  })
-);
-
-function normalizeReport(value: unknown) {
-  return reportSchema.parse(value);
-}
 
 function scrubHallucinations(report: any): any {
   // If confidence is low, this means the model was uncertain or didn't have enough info.
@@ -98,6 +19,7 @@ function scrubHallucinations(report: any): any {
       matchScore: 50, // Neutral score when unsure
       buyDecision: 'Maybe',
       quickTake: report.missingInfo?.join(', ') || 'Insufficient info. Please provide product name, label photo, or specific cannabinoid data.',
+      whyThisScore: '',
       expectedEffects: [], // Don't invent effects
       watchOuts: [],
       bestFor: [],
@@ -111,6 +33,46 @@ function scrubHallucinations(report: any): any {
     };
   }
   return report;
+}
+
+// Pull the user's recent session logs and turn them into a compact digest the
+// model can actually learn from. This is what makes the app get smarter as
+// the journal grows.
+async function buildHistoryDigest(deviceId: string | null): Promise<string | null> {
+  if (!deviceId) return null;
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from('sessions')
+      .select('created_at, strain_name, rating, feelings, notes, would_buy_again, reports(report)')
+      .eq('user_id', deviceId)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error || !data?.length) return null;
+
+    const lines = data.map((s: any) => {
+      const rep = s.reports?.report || {};
+      const details = [
+        toDisplayText(rep.terpenes, ''),
+        toDisplayText(rep.cannabinoids, '')
+      ].filter(Boolean).join('; ');
+      const parts = [
+        s.strain_name || toDisplayText(rep.strainName, 'Unknown strain'),
+        details ? `(${details})` : '',
+        s.rating ? `rated ${s.rating}/5` : '',
+        Array.isArray(s.feelings) && s.feelings.length ? `felt: ${s.feelings.join(', ')}` : '',
+        s.would_buy_again === true ? 'would buy again' : s.would_buy_again === false ? 'would NOT buy again' : '',
+        s.notes ? `notes: "${String(s.notes).slice(0, 140)}"` : ''
+      ].filter(Boolean);
+      return `- ${parts.join(' — ')}`;
+    });
+
+    return lines.join('\n');
+  } catch {
+    return null; // History is a bonus, never a blocker.
+  }
 }
 
 async function searchWeb(query: string): Promise<string | null> {
@@ -236,6 +198,7 @@ export async function POST(req: NextRequest) {
   const form = await req.formData();
   const question = String(form.get('question') || '');
   const prefs = JSON.parse(String(form.get('preferences') || '{}'));
+  const deviceId = String(form.get('deviceId') || '') || null;
   const file = form.get('image') as File | null;
 
   if (!process.env.OPENAI_API_KEY) {
@@ -250,11 +213,26 @@ export async function POST(req: NextRequest) {
     imageDataUrl = `data:${file.type};base64,${bytes.toString('base64')}`;
   }
 
-  const system = `You are 1Toke, a fast buying assistant for cannabis purchases. Help adults make safer, more personalized decisions. Never provide medical claims. Return ONLY valid JSON.
+  const historyDigest = await buildHistoryDigest(deviceId);
+
+  const system = `You are 1Toke: a sharp, honest budtender friend helping an adult make a fast in-store buying decision. You hype products that genuinely fit this person and you are blunt when something is wrong for them. Never provide medical claims. Return ONLY valid JSON.
+
+VOICE:
+- quickTake and whyThisScore: casual, warm, a little playful. Talk like a knowledgeable friend, not a lab report. One or two punchy sentences each.
+- dosingGuidance and watchOuts: straight, clear, zero jokes. Safety content stays serious.
+
+PERSONALIZATION:
+- Score against THIS user's preference toggles, tolerance, intensity target, and adventure mode (safe = stay close to what works, explore = adjacent new things, surprise = wildcards welcome).
+- whyThisScore must tie the score to their profile in one sentence (e.g. "Limonene-forward matches your citrus + creative lean, but 31% THC is punchy for your medium tolerance.").
+${historyDigest ? `
+SESSION HISTORY (this user's real logged outcomes, newest first — weigh heavily; it beats generic strain lore):
+${historyDigest}
+
+If the product resembles something they logged (same strain, terpene profile, or potency band), say so explicitly in quickTake or whyThisScore, e.g. "Same limonene-heavy profile as L'Orange, which you rated 5/5." Low-rated history with a similar profile should drag the score down and show up in watchOuts.` : ''}
 
 🚫 STRICT NO-HALLUCINATION RULE:
 If you do not have CONCRETE information, DO NOT INCLUDE IT. Don't guess, don't infer, don't use generic knowledge:
-- If you don't know the THC/CBD %, set cannabinoids to empty string""
+- If you don't know the THC/CBD %, set cannabinoids to empty string ""
 - If you don't know terpenes, return empty array []
 - If you don't know effects, return empty array []
 - If you don't see a product name/label, set strainName to "Unknown"
@@ -275,12 +253,12 @@ When confidence is LOW, set these fields explicitly:
 - buyDecision: "Maybe"
 - missingInfo: List exactly what data you need (e.g., "strain name", "THC percentage from label", "product label photo")
 
-Return JSON with: strainName, brand, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array.`;
+Return JSON with: strainName, brand, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array.`;
 
   const userText = `Analyze this product/strain for a quick in-store buying decision.
 Question or typed label: ${question}
 User preference toggles: ${JSON.stringify(prefs)}
-Return JSON with: strainName, brand, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array.`;
+Return JSON with: strainName, brand, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array.`;
 
   const input: any[] = [{ role: 'system', content: system }];
   input.push({
@@ -334,7 +312,7 @@ Return JSON with: strainName, brand, productType, cannabinoids, terpenes array, 
       }
     }
 
-    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound });
+    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, usedHistory: Boolean(historyDigest) });
   } catch (err: any) {
     const payload = toErrorPayload(err);
     console.error('Analyze API failed', {
