@@ -78,6 +78,11 @@ p { margin: 0; color: var(--muted); line-height: 1.45; }
 .typebadge.indica { color: #c4b0ff; border-color: rgba(196,176,255,.4); background: rgba(196,176,255,.08); }
 .typebadge.hybrid { color: var(--warn); border-color: rgba(255,209,102,.4); background: rgba(255,209,102,.08); }
 .brandnotes { border-left: 3px solid var(--line); padding-left: 10px; }
+.editlink { border: 0; background: none; color: var(--muted); font-weight: 800; padding: 4px 0; }
+.danger {
+  width: 100%; border: 1px solid rgba(255,122,144,.4); border-radius: 16px;
+  padding: 12px 14px; background: rgba(255,122,144,.08); color: var(--bad); font-weight: 800;
+}
 .input, textarea {
   width: 100%;
   border: 1px solid var(--line);

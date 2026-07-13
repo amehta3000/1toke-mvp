@@ -14,7 +14,7 @@ export function Stars({ value, onChange }: { value: number; onChange?: (v: numbe
   </div>;
 }
 
-function SessionCard({ session }: { session: any }) {
+function SessionCard({ session, onEdit }: { session: any; onEdit: () => void }) {
   const [open, setOpen] = useState(false);
   const rep = session.reports?.report || null;
   const when = session.created_at ? new Date(session.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
@@ -30,7 +30,10 @@ function SessionCard({ session }: { session: any }) {
     </div>
     {feelings.length > 0 && <div className="chips">{feelings.map(f => <span key={f} className="chip mini">{f}</span>)}</div>}
     {session.notes && <p className="notes">“{session.notes}”</p>}
-    {rep && <div className="small expand-hint">{open ? '▾ product details' : '▸ product details'}</div>}
+    <div className="pillline">
+      <span className="small expand-hint">{rep ? (open ? '▾ product details' : '▸ product details') : ''}</span>
+      <button className="editlink small" onClick={e => { e.stopPropagation(); onEdit(); }}>✎ Edit</button>
+    </div>
     {open && rep && <div className="stack" onClick={e => e.stopPropagation()}>
       <div className="metric"><b>Decision was</b><span>{rep.buyDecision || '—'} · score {rep.matchScore ?? '—'}</span></div>
       <div className="metric"><b>Cannabinoids</b><span>{rep.cannabinoids || 'Unknown'}</span></div>
@@ -47,7 +50,8 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
   onLogged: () => Promise<void>;
   showToast: (msg: string) => void;
 }) {
-  const [logging, setLogging] = useState(false);
+  // null = timeline; 'new' = logging; otherwise the session being edited.
+  const [editing, setEditing] = useState<'new' | any | null>(null);
   const [pickedReportId, setPickedReportId] = useState<string | 'other' | null>(null);
   const [customName, setCustomName] = useState('');
   const [feelings, setFeelings] = useState<string[]>([]);
@@ -55,22 +59,40 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
   const [wouldBuyAgain, setWouldBuyAgain] = useState<boolean | null>(null);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const recentReports = savedReports.slice(0, 8);
+  const isEdit = editing !== null && editing !== 'new';
 
-  function reset() {
-    setLogging(false);
+  function openNew() {
+    setEditing('new');
     setPickedReportId(null);
     setCustomName('');
     setFeelings([]);
     setRating(0);
     setWouldBuyAgain(null);
     setNotes('');
+    setConfirmDelete(false);
+  }
+
+  function openEdit(session: any) {
+    setEditing(session);
+    setPickedReportId(null);
+    setCustomName(session.strain_name || '');
+    setFeelings(Array.isArray(session.feelings) ? session.feelings : []);
+    setRating(session.rating || 0);
+    setWouldBuyAgain(typeof session.would_buy_again === 'boolean' ? session.would_buy_again : null);
+    setNotes(session.notes || '');
+    setConfirmDelete(false);
+  }
+
+  function close() {
+    setEditing(null);
   }
 
   async function save() {
     const picked = recentReports.find(r => r.id === pickedReportId);
-    const strainName = pickedReportId === 'other'
+    const strainName = isEdit || pickedReportId === 'other'
       ? customName.trim()
       : String(picked?.report?.strainName || '');
     if (!strainName) { showToast('Tell me what you had first 🙂'); return; }
@@ -78,24 +100,20 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
 
     setSaving(true);
     try {
+      const payload: any = { deviceId, strainName, rating, feelings, wouldBuyAgain, notes };
+      if (isEdit) payload.id = editing.id;
+      else payload.reportId = pickedReportId === 'other' ? null : pickedReportId;
+
       const res = await fetch('/api/sessions', {
-        method: 'POST',
+        method: isEdit ? 'PATCH' : 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          deviceId,
-          reportId: pickedReportId === 'other' ? null : pickedReportId,
-          strainName,
-          rating,
-          feelings,
-          wouldBuyAgain,
-          notes
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json().catch(() => ({}));
       if (data?.saved) {
         await onLogged();
-        reset();
-        showToast('Logged 📓 Future you says thanks.');
+        close();
+        showToast(isEdit ? 'Updated ✍️' : 'Logged 📓 Future you says thanks.');
       } else if (data?.needsMigration) {
         showToast('One-time setup needed: run supabase-schema.sql in Supabase.');
       } else if (data?.localOnly) {
@@ -110,20 +128,44 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
     }
   }
 
-  if (logging) {
+  async function remove() {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/sessions?id=${encodeURIComponent(editing.id)}&deviceId=${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (data?.deleted) {
+        await onLogged();
+        close();
+        showToast('Entry deleted 🗑');
+      } else {
+        showToast('Could not delete that. Try again?');
+      }
+    } catch {
+      showToast('Network hiccup — try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing !== null) {
     return <div className="card stack">
-      <div className="kicker">10 seconds, tops</div>
-      <h2>Log the session</h2>
+      <div className="kicker">{isEdit ? 'Fix it up' : '10 seconds, tops'}</div>
+      <h2>{isEdit ? 'Edit the session' : 'Log the session'}</h2>
 
       <h3>What did you have?</h3>
-      <div className="chips">
-        {recentReports.map(r => {
-          const name = String(r.report?.strainName || 'Saved product');
-          return <button key={r.id} className={`chip ${pickedReportId === r.id ? 'active' : ''}`} onClick={() => setPickedReportId(r.id)}>{name}</button>;
-        })}
-        <button className={`chip ${pickedReportId === 'other' ? 'active' : ''}`} onClick={() => setPickedReportId('other')}>✍️ Something else</button>
-      </div>
-      {pickedReportId === 'other' && <input className="input" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Strain or product name" />}
+      {isEdit
+        ? <input className="input" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Strain or product name" />
+        : <>
+          <div className="chips">
+            {recentReports.map(r => {
+              const name = String(r.report?.strainName || 'Saved product');
+              return <button key={r.id} className={`chip ${pickedReportId === r.id ? 'active' : ''}`} onClick={() => setPickedReportId(r.id)}>{name}</button>;
+            })}
+            <button className={`chip ${pickedReportId === 'other' ? 'active' : ''}`} onClick={() => setPickedReportId('other')}>✍️ Something else</button>
+          </div>
+          {pickedReportId === 'other' && <input className="input" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Strain or product name" />}
+        </>}
 
       <h3>How did it feel?</h3>
       <div className="chips">{feelingOptions.map(f =>
@@ -144,9 +186,12 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
       </label>
 
       <div className="row">
-        <button className="secondary" onClick={reset}>Cancel</button>
-        <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Log it'}</button>
+        <button className="secondary" onClick={close}>Cancel</button>
+        <button className="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save changes' : 'Log it'}</button>
       </div>
+      {isEdit && <button className="danger" onClick={remove} disabled={saving}>
+        {confirmDelete ? 'Tap again to delete for real' : '🗑 Delete this entry'}
+      </button>}
     </div>;
   }
 
@@ -154,11 +199,11 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
     <div className="card stack">
       <div className="pillline">
         <div><div className="kicker">Journal</div><h2>Your sessions</h2></div>
-        <button className="primary slim" onClick={() => setLogging(true)}>＋ Log a session</button>
+        <button className="primary slim" onClick={openNew}>＋ Log a session</button>
       </div>
       {needsMigration && <p className="small banner">⚠️ One-time setup: run the updated <b>supabase-schema.sql</b> in your Supabase SQL editor to store sessions.</p>}
       {sessions.length === 0 && !needsMigration && <p>Nothing logged yet. Flower, vape, gummy, whatever — after your next session, come back and tap it in. This is literally how I get smarter about you.</p>}
-      {sessions.map(s => <SessionCard key={s.id} session={s} />)}
+      {sessions.map(s => <SessionCard key={s.id} session={s} onEdit={() => openEdit(s)} />)}
     </div>
 
     {savedReports.length > 0 && <div className="card stack">
