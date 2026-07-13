@@ -73,7 +73,7 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
     const strainName = pickedReportId === 'other'
       ? customName.trim()
       : String(picked?.report?.strainName || '');
-    if (!strainName) { showToast('Tell me what you smoked first 🙂'); return; }
+    if (!strainName) { showToast('Tell me what you had first 🙂'); return; }
     if (!rating) { showToast('Give it a star rating — that’s the part I learn from'); return; }
 
     setSaving(true);
@@ -115,7 +115,7 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
       <div className="kicker">10 seconds, tops</div>
       <h2>Log the session</h2>
 
-      <h3>What did you smoke?</h3>
+      <h3>What did you have?</h3>
       <div className="chips">
         {recentReports.map(r => {
           const name = String(r.report?.strainName || 'Saved product');
@@ -157,7 +157,7 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
         <button className="primary slim" onClick={() => setLogging(true)}>＋ Log a session</button>
       </div>
       {needsMigration && <p className="small banner">⚠️ One-time setup: run the updated <b>supabase-schema.sql</b> in your Supabase SQL editor to store sessions.</p>}
-      {sessions.length === 0 && !needsMigration && <p>Nothing logged yet. After you spark something, come back and tap it in — this is literally how I get smarter about you.</p>}
+      {sessions.length === 0 && !needsMigration && <p>Nothing logged yet. Flower, vape, gummy, whatever — after your next session, come back and tap it in. This is literally how I get smarter about you.</p>}
       {sessions.map(s => <SessionCard key={s.id} session={s} />)}
     </div>
 

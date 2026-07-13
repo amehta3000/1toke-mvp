@@ -24,7 +24,7 @@ export default function ProfileTab({ prefs, setPrefs, onReplaySetup }: {
       )}</div>
     </div>)}
 
-    <h3>How high is a good night?</h3>
+    <h3>How high is a good session?</h3>
     <input type="range" min="0" max="100" value={prefs.intensity} onChange={e => setPrefs(p => ({ ...p, intensity: Number(e.target.value) }))} />
     <div className="slider-ends small"><span>gentle buzz</span><span>send me</span></div>
 

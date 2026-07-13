@@ -30,6 +30,25 @@ const navItems = [
   { id: 'profile', label: 'Profile', icon: '🎛' }
 ] as const;
 
+const heroCopy = {
+  scan: {
+    title: 'Scan before you buy.',
+    sub: 'Snap a label or ask about a strain. Get a personal match score and a straight Buy / Maybe / Skip.'
+  },
+  journal: {
+    title: 'Log it while it’s fresh.',
+    sub: 'Ten seconds of taps per session — this is what teaches 1Toke what actually works on you.'
+  },
+  discover: {
+    title: 'Know your patterns.',
+    sub: 'What your logged sessions say about the strains, terpenes, and feelings that suit you.'
+  },
+  profile: {
+    title: 'Make it yours.',
+    sub: 'Your vibe, your limits. Every verdict is scored against what you set here.'
+  }
+} as const;
+
 export default function Page() {
   const [tab, setTab] = useState<'scan'|'journal'|'discover'|'profile'>('scan');
   const [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
@@ -176,7 +195,7 @@ export default function Page() {
       const data = await res.json().catch(() => ({}));
       if (data?.saved) {
         await loadSavedReports(deviceId);
-        showToast('Saved 🛒 Log the session in Journal after you spark it.');
+        showToast('Saved 🛒 Log the session in Journal after you try it.');
       } else if (data?.localOnly) {
         showToast('Saved locally — database not configured.');
       } else {
@@ -211,8 +230,8 @@ export default function Page() {
   return <main className="app">
     <section className="hero">
       <div className="kicker">1Toke</div>
-      <h1>Scan before you buy.</h1>
-      <p>Snap a label or ask about a strain. Get a personal match score and a straight Buy / Maybe / Skip.</p>
+      <h1>{heroCopy[tab].title}</h1>
+      <p>{heroCopy[tab].sub}</p>
     </section>
 
     {tab === 'scan' && <div className="stack">

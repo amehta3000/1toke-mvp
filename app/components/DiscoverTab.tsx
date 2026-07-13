@@ -53,10 +53,10 @@ export default function DiscoverTab({ sessions }: { sessions: any[] }) {
   if (insights.rated < 3) {
     return <div className="card stack">
       <div className="kicker">Discover</div>
-      <h2>Your patterns, once there are patterns</h2>
+      <h2>Still learning you</h2>
       <p>Log <b>{3 - insights.rated} more rated {3 - insights.rated === 1 ? 'session' : 'sessions'}</b> and this tab starts earning its keep: which strains are repeat-worthy, which terpenes actually work on you, and what to dodge.</p>
       <div className="metric"><b>🔁 Repeat-worthy</b><span>your 4★+ strains land here</span></div>
-      <div className="metric"><b>🧪 Terpene wins</b><span>what your best nights have in common</span></div>
+      <div className="metric"><b>🧪 Terpene wins</b><span>what your best sessions have in common</span></div>
       <div className="metric"><b>🙅 Not your thing</b><span>logged so you never rebuy a dud</span></div>
     </div>;
   }
