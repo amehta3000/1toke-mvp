@@ -1,6 +1,7 @@
 export type PreferenceKey =
   | 'creative' | 'social' | 'focused' | 'euphoric' | 'calm' | 'sleepy' | 'bodyRelaxed'
   | 'uplifting' | 'energetic' | 'happy' | 'music' | 'daytime'
+  | 'painRelief' | 'cozy' | 'nighttime' | 'unwind' | 'appetite'
   | 'avoidAnxious' | 'avoidFoggy' | 'avoidCouchLock' | 'avoidHeavyComedown' | 'avoidMunchies'
   | 'citrus' | 'pine' | 'berry' | 'tropical' | 'gas' | 'earthy' | 'dessert';
 
