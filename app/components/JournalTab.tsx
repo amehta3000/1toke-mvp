@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { feelingOptions } from '@/lib/defaults';
 import { SavedReport } from '@/lib/types';
+import { authFetch } from '@/lib/supabaseBrowser';
 
 export function Stars({ value, onChange }: { value: number; onChange?: (v: number) => void }) {
   return <div className={`stars ${onChange ? 'tappable' : ''}`}>
@@ -42,13 +43,15 @@ function SessionCard({ session, onEdit }: { session: any; onEdit: () => void }) 
   </div>;
 }
 
-export default function JournalTab({ deviceId, sessions, needsMigration, savedReports, onLogged, showToast }: {
+export default function JournalTab({ deviceId, sessions, needsMigration, savedReports, onLogged, showToast, showAccountNudge, onAccountNudge }: {
   deviceId: string;
   sessions: any[];
   needsMigration: boolean;
   savedReports: SavedReport[];
   onLogged: () => Promise<void>;
   showToast: (msg: string) => void;
+  showAccountNudge?: boolean;
+  onAccountNudge?: () => void;
 }) {
   // null = timeline; 'new' = logging; otherwise the session being edited.
   const [editing, setEditing] = useState<'new' | any | null>(null);
@@ -104,7 +107,7 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
       if (isEdit) payload.id = editing.id;
       else payload.reportId = pickedReportId === 'other' ? null : pickedReportId;
 
-      const res = await fetch('/api/sessions', {
+      const res = await authFetch('/api/sessions', {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload)
@@ -132,7 +135,7 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
     if (!confirmDelete) { setConfirmDelete(true); return; }
     setSaving(true);
     try {
-      const res = await fetch(`/api/sessions?id=${encodeURIComponent(editing.id)}&deviceId=${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/sessions?id=${encodeURIComponent(editing.id)}&deviceId=${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (data?.deleted) {
         await onLogged();
@@ -202,6 +205,7 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
         <button className="primary slim" onClick={openNew}>＋ Log a session</button>
       </div>
       {needsMigration && <p className="small banner">⚠️ One-time setup: run the updated <b>supabase-schema.sql</b> in your Supabase SQL editor to store sessions.</p>}
+      {showAccountNudge && <button className="banner nudge small" onClick={onAccountNudge}>🔐 This journal lives only on this device. Tap to add your email so it follows you anywhere.</button>}
       {sessions.length === 0 && !needsMigration && <p>Nothing logged yet. Flower, vape, gummy, whatever — after your next session, come back and tap it in. This is literally how I get smarter about you.</p>}
       {sessions.map(s => <SessionCard key={s.id} session={s} onEdit={() => openEdit(s)} />)}
     </div>

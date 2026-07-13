@@ -5,15 +5,20 @@ import { defaultPreferences, labels } from '@/lib/defaults';
 import { Preferences, SavedReport, StrainReport } from '@/lib/types';
 import { normalizeReport } from '@/lib/report';
 import { getDeviceId, safeGet, safeSet } from '@/lib/storage';
+import { getSupabaseBrowser, authFetch } from '@/lib/supabaseBrowser';
 import Onboarding from './components/Onboarding';
 import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
 import DiscoverTab from './components/DiscoverTab';
 import ProfileTab from './components/ProfileTab';
 import InstallPrompt from './components/InstallPrompt';
+import AccountCard from './components/AccountCard';
 
 const storageKey = '1toke:prefs';
 const onboardedKey = '1toke:onboarded';
+const claimedKey = '1toke:claimed';
+
+type IdentityInfo = { configured: boolean; isAnonymous: boolean; email: string | null };
 
 const loadingLines = [
   'Reading the label…',
@@ -64,6 +69,7 @@ export default function Page() {
   const [loadingLine, setLoadingLine] = useState(0);
   const [saving, setSaving] = useState(false);
   const [deviceId, setDeviceId] = useState('');
+  const [identity, setIdentity] = useState<IdentityInfo>({ configured: false, isAnonymous: true, email: null });
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
   const [needsMigration, setNeedsMigration] = useState(false);
@@ -79,7 +85,7 @@ export default function Page() {
   async function loadSavedReports(id: string) {
     if (!id) return;
     try {
-      const res = await fetch(`/api/reports?deviceId=${encodeURIComponent(id)}`);
+      const res = await authFetch(`/api/reports?deviceId=${encodeURIComponent(id)}`);
       const data = await res.json().catch(() => ({}));
       setSavedReports(Array.isArray(data.reports) ? data.reports : []);
     } catch {
@@ -90,13 +96,63 @@ export default function Page() {
   async function loadSessions(id: string) {
     if (!id) return;
     try {
-      const res = await fetch(`/api/sessions?deviceId=${encodeURIComponent(id)}`);
+      const res = await authFetch(`/api/sessions?deviceId=${encodeURIComponent(id)}`);
       const data = await res.json().catch(() => ({}));
       setSessions(Array.isArray(data.sessions) ? data.sessions : []);
       setNeedsMigration(Boolean(data.needsMigration));
     } catch {
       // Offline or DB unavailable: keep whatever we have.
     }
+  }
+
+  // Establish who this device is: an anonymous Supabase user when accounts are
+  // configured (claiming any pre-auth journal rows once), otherwise the legacy
+  // device id. Data loads after identity so requests carry the right token.
+  async function initIdentity(id: string) {
+    const sb = getSupabaseBrowser();
+    if (!sb) {
+      setIdentity({ configured: false, isAnonymous: true, email: null });
+      loadSavedReports(id);
+      loadSessions(id);
+      return;
+    }
+    let session = (await sb.auth.getSession()).data.session;
+    if (!session) {
+      try {
+        const { data, error } = await sb.auth.signInAnonymously();
+        if (!error) session = data.session;
+      } catch { /* fall through to legacy mode */ }
+    }
+    if (session && !safeGet(claimedKey)) {
+      try {
+        const res = await fetch('/api/claim', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ legacyDeviceId: id })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data?.claimed) safeSet(claimedKey, '1');
+      } catch { /* claim retries on next visit */ }
+    }
+    setIdentity({
+      configured: true,
+      isAnonymous: session ? session.user.is_anonymous !== false : true,
+      email: session?.user?.email || null
+    });
+    loadSavedReports(id);
+    loadSessions(id);
+  }
+
+  async function refreshIdentity() {
+    const sb = getSupabaseBrowser();
+    if (!sb) return;
+    const session = (await sb.auth.getSession()).data.session;
+    setIdentity({
+      configured: true,
+      isAnonymous: session ? session.user.is_anonymous !== false : true,
+      email: session?.user?.email || null
+    });
+    await Promise.all([loadSavedReports(deviceId), loadSessions(deviceId)]);
   }
 
   useEffect(() => {
@@ -111,8 +167,7 @@ export default function Page() {
     }
     const id = getDeviceId();
     setDeviceId(id);
-    loadSavedReports(id);
-    loadSessions(id);
+    initIdentity(id);
   }, []);
   useEffect(() => { safeSet(storageKey, JSON.stringify(prefs)); }, [prefs]);
 
@@ -153,7 +208,7 @@ export default function Page() {
       form.set('deviceId', deviceId);
       if (image) form.set('image', image);
 
-      const res = await fetch('/api/analyze', { method: 'POST', body: form });
+      const res = await authFetch('/api/analyze', { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -187,7 +242,7 @@ export default function Page() {
     if (!report) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/reports', {
+      const res = await authFetch('/api/reports', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ report, deviceId })
@@ -281,11 +336,16 @@ export default function Page() {
       savedReports={savedReports}
       onLogged={() => loadSessions(deviceId)}
       showToast={showToast}
+      showAccountNudge={identity.configured && identity.isAnonymous && sessions.length >= 2}
+      onAccountNudge={() => setTab('profile')}
     />}
 
     {tab === 'discover' && <DiscoverTab sessions={sessions} />}
 
-    {tab === 'profile' && <ProfileTab prefs={prefs} setPrefs={setPrefs} onReplaySetup={() => setShowOnboarding(true)} />}
+    {tab === 'profile' && <div className="stack">
+      <ProfileTab prefs={prefs} setPrefs={setPrefs} onReplaySetup={() => setShowOnboarding(true)} />
+      <AccountCard email={identity.email} isAnonymous={identity.isAnonymous} onChanged={refreshIdentity} showToast={showToast} />
+    </div>}
 
     {toast && <div className="toast" role="status">{toast}</div>}
 
