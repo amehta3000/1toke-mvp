@@ -19,6 +19,24 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
 
   if (!getSupabaseBrowser()) return null;
 
+  // Supabase auth errors vary in shape; an SMTP failure in particular can come
+  // back with an unhelpful body. Pull out whatever is actually there, and log
+  // the raw object so the console has the full picture.
+  function describeError(err: any, fallback: string): string {
+    console.error('[1toke auth]', err);
+    const raw = typeof err?.message === 'string' ? err.message.trim() : '';
+    const message = raw && raw !== '{}' && raw !== '[object Object]' ? raw : '';
+    const status = err?.status ? `HTTP ${err.status}` : '';
+    const code = typeof err?.code === 'string' ? err.code : '';
+    const detail = [message, code, status].filter(Boolean).join(' · ');
+    if (!detail) return fallback;
+    // The most common real cause: SMTP configured but the provider rejected it.
+    if (/sending|smtp|mail/i.test(detail)) {
+      return `Email couldn't be sent — check SMTP + sender domain. (${detail})`;
+    }
+    return detail;
+  }
+
   async function sendCode() {
     const sb = getSupabaseBrowser();
     if (!sb) return;
@@ -32,7 +50,7 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
       if (!session) {
         // No anonymous session (e.g. anonymous sign-ins disabled): plain OTP sign-in/up.
         const { error } = await sb.auth.signInWithOtp({ email: target });
-        if (error) { showToast(error.message); return; }
+        if (error) { showToast(describeError(error, 'Could not send the code. Try again in a minute.')); return; }
         setMode('signin');
         setStage('code');
         showToast('Code sent 📬 Check your inbox.');
@@ -48,12 +66,15 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
         showToast('Code sent 📬 Check your inbox.');
         return;
       }
-      if (!/already|registered|exists/i.test(error.message)) { showToast(error.message); return; }
+      if (!/already|registered|exists/i.test(String(error.message || ''))) {
+        showToast(describeError(error, 'Could not send the code. Try again in a minute.'));
+        return;
+      }
 
       // Email belongs to an existing account: sign into it instead, then merge
       // this device's anonymous data via /api/claim after verification.
       const { error: otpError } = await sb.auth.signInWithOtp({ email: target, options: { shouldCreateUser: false } });
-      if (otpError) { showToast(otpError.message); return; }
+      if (otpError) { showToast(describeError(otpError, 'Could not send the code. Try again in a minute.')); return; }
       setMode('signin');
       setStage('code');
       showToast('Welcome back 👋 Code sent — check your inbox.');
@@ -71,7 +92,7 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
     try {
       const type = mode === 'link' ? 'email_change' as const : 'email' as const;
       const { data, error } = await sb.auth.verifyOtp({ email: addr.trim().toLowerCase(), token, type });
-      if (error) { showToast('That code didn’t work — double-check it or resend.'); return; }
+      if (error) { showToast(describeError(error, 'That code didn’t work — double-check it or resend.')); return; }
 
       if (mode === 'signin') {
         // Fold this device's anonymous journal into the account we just entered.
