@@ -54,17 +54,27 @@ migration, no passwords. One-time setup:
    the legacy device-id mode.
 2. **Anonymous sign-ins**: Supabase dashboard → Authentication → Sign In /
    Providers → enable **Anonymous sign-ins**.
-3. **Email templates**: Authentication → Email Templates. In both **Magic
-   Link** and **Change Email Address**, make sure the 6-digit code is in the
-   body, e.g. `<p>Your 1Toke code: <b>{{ .Token }}</b></p>`. (Codes instead of
-   links because the iOS home-screen app and Safari don't share sessions — a
-   link would sign in the wrong one.)
-4. **Re-run `supabase-schema.sql`** to enable row-level security (blocks
+3. **Custom SMTP — required, not optional.** Supabase locks email template
+   editing behind custom SMTP, and its default template sends only a sign-in
+   *link* with no code, so the OTP flow cannot work until this is set up.
+   Authentication → Emails → SMTP settings. Resend's free tier works: verify
+   the domain, create an API key, then use host `smtp.resend.com`, port `465`,
+   user `resend`, password = the API key, sender `1toke@yourdomain`. This also
+   lifts the built-in sender's few-emails-per-hour cap.
+4. **Email templates**: Authentication → Emails. Paste
+   `supabase/email-templates/magic-link-otp.html` into **Magic link or OTP**
+   (subject: `Your 1Toke code`) and
+   `supabase/email-templates/change-email.html` into **Change Email Address**
+   (subject: `Confirm your email for 1Toke`). Both are code-only by design —
+   an installed home-screen app and Safari keep separate sessions, so a
+   tapped link would sign in the wrong one.
+5. **Re-run `supabase-schema.sql`** to enable row-level security (blocks
    direct table access with the now-public anon key; the server's service
    role is unaffected).
-5. **Before real testers**: Supabase's built-in email sender allows only a
-   few messages per hour. Wire custom SMTP (Authentication → Emails → SMTP
-   settings; Resend's free tier works) on your domain.
+
+Leave the **captcha** option for anonymous sign-ins **off** unless the client
+is updated to send a captcha token — enabling it would break the silent
+anonymous sign-in every visitor depends on.
 
 How identity flows: API routes verify the caller's Supabase JWT and scope all
 reads/writes to that user id, falling back to the legacy device id only for

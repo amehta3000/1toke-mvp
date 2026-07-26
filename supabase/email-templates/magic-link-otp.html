@@ -1,0 +1,35 @@
+<!-- Supabase → Authentication → Emails → "Magic link or OTP"
+     Subject: Your 1Toke code
+     Code-only on purpose: an installed home-screen app and Safari keep separate
+     sessions, so a tapped link would sign in the wrong one. -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#0f1115" style="background-color:#0f1115;margin:0;padding:32px 16px;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:440px;background-color:#171a21;border:1px solid #2a2f3a;border-radius:24px;">
+        <tr>
+          <td style="padding:32px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+
+            <p style="margin:0 0 6px;color:#d7ff55;font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">1Toke</p>
+
+            <h1 style="margin:0 0 12px;color:#f4f1e8;font-size:28px;line-height:1.1;letter-spacing:-1px;font-weight:800;">Here&rsquo;s your code.</h1>
+
+            <p style="margin:0 0 24px;color:#a7abb8;font-size:15px;line-height:1.5;">Pop this into the app to finish signing in. It expires in about an hour and only works once.</p>
+
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0f1115;border:1px solid #2a2f3a;border-radius:16px;">
+              <tr>
+                <td align="center" style="padding:22px 12px;">
+                  <span style="color:#d7ff55;font-size:38px;font-weight:800;letter-spacing:10px;font-family:'SF Mono',Menlo,Consolas,monospace;">{{ .Token }}</span>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:24px 0 0;color:#a7abb8;font-size:13px;line-height:1.5;">Didn&rsquo;t ask for this? Ignore this email &mdash; nothing changes and nobody gets into your journal.</p>
+
+            <p style="margin:24px 0 0;padding-top:20px;border-top:1px solid #2a2f3a;color:#6f7480;font-size:12px;line-height:1.5;">1Toke &middot; your pocket budtender<br>Scan before you buy.</p>
+
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
