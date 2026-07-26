@@ -43,7 +43,7 @@ NEXT_PUBLIC_SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-## Enable accounts (email + 6-digit code)
+## Enable accounts (email + one-time code)
 
 Accounts are optional and frictionless: every visitor gets a silent anonymous
 Supabase user, and adding an email later upgrades that same user — no data

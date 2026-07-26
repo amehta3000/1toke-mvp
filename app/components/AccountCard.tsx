@@ -87,7 +87,7 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
     const sb = getSupabaseBrowser();
     if (!sb) return;
     const token = code.trim();
-    if (token.length < 6) { showToast('Enter the 6-digit code from the email'); return; }
+    if (token.length < 6) { showToast('Enter the whole code from the email'); return; }
     setBusy(true);
     try {
       const type = mode === 'link' ? 'email_change' as const : 'email' as const;
@@ -143,13 +143,15 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
     <div className="kicker">Account</div>
     <h3>Don&apos;t lose your journal</h3>
     {stage === 'idle' && <>
-      <p className="small">Right now everything lives on this device only. Add your email and your journal follows you anywhere — no password, just a 6-digit code. Already have an account? Same box.</p>
+      <p className="small">Right now everything lives on this device only. Add your email and your journal follows you anywhere — no password, just a code from your inbox. Already have an account? Same box.</p>
       <input className="input" type="email" inputMode="email" autoComplete="email" value={addr} onChange={e => setAddr(e.target.value)} placeholder="you@example.com" />
       <button className="primary" onClick={sendCode} disabled={busy}>{busy ? 'Sending…' : 'Email me a code'}</button>
     </>}
     {stage === 'code' && <>
-      <p className="small">We sent a 6-digit code to <b>{addr.trim()}</b>. Type it here — that&apos;s the whole thing.</p>
-      <input className="input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))} placeholder="123456" />
+      <p className="small">We sent a code to <b>{addr.trim()}</b>. Type it here — that&apos;s the whole thing.</p>
+      {/* Supabase's OTP length is configurable (6–10), so don't cap this at 6:
+          a shorter maxLength silently truncates and every code looks wrong. */}
+      <input className="input" inputMode="numeric" autoComplete="one-time-code" maxLength={10} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="Paste your code" />
       <div className="row">
         <button className="secondary" onClick={() => { setStage('idle'); setCode(''); }} disabled={busy}>Back</button>
         <button className="primary" onClick={verify} disabled={busy}>{busy ? 'Checking…' : 'Verify'}</button>
