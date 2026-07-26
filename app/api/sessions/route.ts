@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { resolveUserId } from '@/lib/serverAuth';
 
 // "relation does not exist" — the sessions migration hasn't been run yet.
 function isMissingTable(error: { code?: string } | null): boolean {
@@ -7,15 +8,15 @@ function isMissingTable(error: { code?: string } | null): boolean {
 }
 
 export async function GET(req: NextRequest) {
-  const deviceId = req.nextUrl.searchParams.get('deviceId');
   const supabase = getSupabaseAdmin();
   if (!supabase) return NextResponse.json({ sessions: [] });
-  if (!deviceId) return NextResponse.json({ sessions: [] });
+  const userId = await resolveUserId(req, req.nextUrl.searchParams.get('deviceId'));
+  if (!userId) return NextResponse.json({ sessions: [] });
 
   const { data, error } = await supabase
     .from('sessions')
     .select('*, reports(report)')
-    .eq('user_id', deviceId)
+    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(100);
 
@@ -41,13 +42,13 @@ function sessionFields(body: any) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const deviceId = typeof body.deviceId === 'string' && body.deviceId ? body.deviceId : null;
   const supabase = getSupabaseAdmin();
   if (!supabase) return NextResponse.json({ saved: false, localOnly: true });
+  const userId = await resolveUserId(req, typeof body.deviceId === 'string' ? body.deviceId : null);
 
   const row = {
     ...sessionFields(body),
-    user_id: deviceId,
+    user_id: userId,
     report_id: typeof body.reportId === 'string' && body.reportId ? body.reportId : null
   };
 
@@ -65,17 +66,17 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const body = await req.json();
   const id = typeof body.id === 'string' ? body.id : '';
-  const deviceId = typeof body.deviceId === 'string' ? body.deviceId : '';
   const supabase = getSupabaseAdmin();
   if (!supabase) return NextResponse.json({ saved: false, localOnly: true });
-  if (!id || !deviceId) return NextResponse.json({ error: 'Missing id or deviceId' }, { status: 400 });
+  const userId = await resolveUserId(req, typeof body.deviceId === 'string' ? body.deviceId : null);
+  if (!id || !userId) return NextResponse.json({ error: 'Missing id or identity' }, { status: 400 });
 
-  // Scoping the update to user_id keeps one device from touching another's entries.
+  // Scoping the update to user_id keeps one person from touching another's entries.
   const { data, error } = await supabase
     .from('sessions')
     .update(sessionFields(body))
     .eq('id', id)
-    .eq('user_id', deviceId)
+    .eq('user_id', userId)
     .select()
     .single();
 
@@ -85,16 +86,16 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get('id') || '';
-  const deviceId = req.nextUrl.searchParams.get('deviceId') || '';
   const supabase = getSupabaseAdmin();
   if (!supabase) return NextResponse.json({ deleted: false, localOnly: true });
-  if (!id || !deviceId) return NextResponse.json({ error: 'Missing id or deviceId' }, { status: 400 });
+  const userId = await resolveUserId(req, req.nextUrl.searchParams.get('deviceId'));
+  if (!id || !userId) return NextResponse.json({ error: 'Missing id or identity' }, { status: 400 });
 
   const { error } = await supabase
     .from('sessions')
     .delete()
     .eq('id', id)
-    .eq('user_id', deviceId);
+    .eq('user_id', userId);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ deleted: true });

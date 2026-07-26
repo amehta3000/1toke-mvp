@@ -15,6 +15,11 @@ export const defaultPreferences: Preferences = {
   happy: false,
   music: false,
   daytime: false,
+  painRelief: false,
+  cozy: false,
+  nighttime: false,
+  unwind: false,
+  appetite: false,
   avoidAnxious: false,
   avoidFoggy: false,
   avoidCouchLock: false,
@@ -33,7 +38,7 @@ export const defaultPreferences: Preferences = {
 };
 
 export const chipGroups = [
-  { title: 'I want to feel', keys: ['creative','social','focused','euphoric','calm','sleepy','bodyRelaxed','uplifting','energetic','happy','music','daytime'] as const },
+  { title: 'I want to feel', keys: ['creative','social','focused','euphoric','calm','sleepy','bodyRelaxed','uplifting','energetic','happy','music','daytime','painRelief','cozy','nighttime','unwind','appetite'] as const },
   { title: 'Kill the vibe (avoid)', keys: ['avoidAnxious','avoidFoggy','avoidCouchLock','avoidHeavyComedown','avoidMunchies'] as const },
   { title: 'Flavors that pull me in', keys: ['citrus','pine','berry','tropical','gas','earthy','dessert'] as const }
 ];
@@ -41,11 +46,12 @@ export const chipGroups = [
 export const labels: Record<string, string> = {
   creative: '🎨 Creative', social: '💬 Social', focused: '🎯 Focused', euphoric: '✨ Euphoric', calm: '😌 Calm', sleepy: '😴 Sleepy', bodyRelaxed: '🛋 Body',
   uplifting: '🌞 Uplifting', energetic: '⚡ Energetic', happy: '😄 Happy', music: '🎵 Music', daytime: '☀️ Daytime',
+  painRelief: '🩹 Pain relief', cozy: '📺 Cozy couch', nighttime: '🌙 Nighttime', unwind: '🧘 Unwind', appetite: '🍽 Appetite',
   avoidAnxious: '😬 Anxiety', avoidFoggy: '🌫 Fog', avoidCouchLock: '🪨 Couch-lock', avoidHeavyComedown: '⬇ Heavy comedown', avoidMunchies: '🍕 Munchies',
   citrus: '🍋 Citrus', pine: '🌲 Pine', berry: '🫐 Berry', tropical: '🥭 Tropical', gas: '⛽ Gas', earthy: '🌱 Earthy', dessert: '🍪 Dessert'
 };
 
-export const feelingOptions = ['Creative','Happy','Social','Focused','Relaxed','Sleepy','Foggy','Anxious','Munchies'] as const;
+export const feelingOptions = ['Creative','Happy','Social','Focused','Relaxed','Sleepy','Cozy','Pain relief','Giggly','Foggy','Anxious','Munchies'] as const;
 
 export const toleranceHints: Record<Preferences['tolerance'], string> = {
   low: 'Lightweight — a little goes a long way',

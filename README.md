@@ -43,7 +43,34 @@ NEXT_PUBLIC_SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-For production, add Supabase Auth and row-level security. This MVP uses server-side service role only for speed.
+## Enable accounts (email + 6-digit code)
+
+Accounts are optional and frictionless: every visitor gets a silent anonymous
+Supabase user, and adding an email later upgrades that same user — no data
+migration, no passwords. One-time setup:
+
+1. **Env var**: add `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Supabase → Settings → API
+   → `anon` `public` key) locally and in Vercel. Without it the app runs in
+   the legacy device-id mode.
+2. **Anonymous sign-ins**: Supabase dashboard → Authentication → Sign In /
+   Providers → enable **Anonymous sign-ins**.
+3. **Email templates**: Authentication → Email Templates. In both **Magic
+   Link** and **Change Email Address**, make sure the 6-digit code is in the
+   body, e.g. `<p>Your 1Toke code: <b>{{ .Token }}</b></p>`. (Codes instead of
+   links because the iOS home-screen app and Safari don't share sessions — a
+   link would sign in the wrong one.)
+4. **Re-run `supabase-schema.sql`** to enable row-level security (blocks
+   direct table access with the now-public anon key; the server's service
+   role is unaffected).
+5. **Before real testers**: Supabase's built-in email sender allows only a
+   few messages per hour. Wire custom SMTP (Authentication → Emails → SMTP
+   settings; Resend's free tier works) on your domain.
+
+How identity flows: API routes verify the caller's Supabase JWT and scope all
+reads/writes to that user id, falling back to the legacy device id only for
+pre-auth clients. On first load after this update, a device's old journal rows
+are claimed into its new anonymous user automatically; signing into an
+existing account from a new device merges that device's anonymous data in.
 
 ## Product notes
 
