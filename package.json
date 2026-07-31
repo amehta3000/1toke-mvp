@@ -8,17 +8,18 @@
     "start": "next start"
   },
   "dependencies": {
-    "@supabase/supabase-js": "latest",
-    "next": "latest",
-    "openai": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "zod": "latest"
+    "@supabase/supabase-js": "^2.110.2",
+    "@vercel/analytics": "^1.5.0",
+    "next": "16.2.10",
+    "openai": "^6.46.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "typescript": "^5.9.2"
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
   }
 }
