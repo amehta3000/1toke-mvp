@@ -32,9 +32,20 @@ create table if not exists sessions (
 create index if not exists sessions_user_created_idx on sessions (user_id, created_at desc);
 create index if not exists reports_user_created_idx on reports (user_id, created_at desc);
 
+-- Cached web-research results per product, so repeat scans of the same item
+-- score off identical facts instead of re-rolling a flaky search each time.
+-- Not user-specific: the facts about a strain are the same for everyone.
+create table if not exists product_facts (
+  cache_key text primary key,
+  subject text not null,
+  context text not null,
+  created_at timestamptz not null default now()
+);
+
 -- The app reads/writes only through server routes using the service role
 -- (which bypasses RLS). Enabling RLS with no public policies blocks anyone
 -- from querying these tables directly with the public anon key.
 alter table reports enable row level security;
 alter table sessions enable row level security;
 alter table user_preferences enable row level security;
+alter table product_facts enable row level security;
