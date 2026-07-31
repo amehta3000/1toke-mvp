@@ -88,7 +88,7 @@ async function searchWeb(query: string): Promise<string | null> {
       body: JSON.stringify({
         api_key: apiKey,
         query: query.slice(0, 100),
-        max_results: 3,
+        max_results: 5,
         include_answer: true
       }),
       signal: AbortSignal.timeout(5000)
@@ -97,7 +97,7 @@ async function searchWeb(query: string): Promise<string | null> {
 
     const data = (await res.json()) as any;
     const answer = data.answer ? `Summary: ${data.answer}` : '';
-    const results = data.results?.slice(0, 3) || [];
+    const results = data.results?.slice(0, 5) || [];
     const resultTexts = results
       .map((r: any) => `${r.title}: ${r.content || ''}`)
       .filter((s: string) => s.trim());
@@ -162,10 +162,57 @@ async function analyzeWithModel(
   const response = await client.responses.create({
     model,
     input: updatedInput as any,
+    // Scoring must be reproducible: the same product and profile should not
+    // swing 20 points between runs. Default temperature (1.0) made it do that.
+    temperature: 0.2,
     text: { format: { type: 'json_object' } }
   });
 
   return response.output_text || '{}';
+}
+
+// Read just enough off a label photo to build a useful web search. Without
+// this, photographed products could never be searched — the old flow only
+// searched when the model happened to report low confidence.
+async function identifyFromImage(
+  client: InstanceType<typeof OpenAI>,
+  model: string,
+  imageDataUrl: string,
+  question: string
+): Promise<string> {
+  try {
+    const response = await client.responses.create({
+      model,
+      temperature: 0,
+      input: [
+        {
+          role: 'system',
+          content: 'Extract the cannabis product identity from the image. Return ONLY JSON: {"strainName": string, "brand": string}. Use "" for anything not clearly legible. Do not guess.'
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: `Typed context (may be empty): ${question}` },
+            { type: 'input_image', image_url: imageDataUrl }
+          ]
+        }
+      ] as any,
+      text: { format: { type: 'json_object' } }
+    });
+    const parsed = JSON.parse(response.output_text || '{}');
+    const name = toDisplayText(parsed?.strainName, '').trim();
+    const brand = toDisplayText(parsed?.brand, '').trim();
+    return [name, brand].filter(v => v && !/^unknown$/i.test(v)).join(' ');
+  } catch {
+    return '';
+  }
+}
+
+// Keep the headline number and the verdict from ever contradicting each other.
+function decisionForScore(score: number): 'Buy' | 'Maybe' | 'Skip' {
+  if (score >= 72) return 'Buy';
+  if (score >= 45) return 'Maybe';
+  return 'Skip';
 }
 
 function toErrorPayload(err: any) {
@@ -226,6 +273,37 @@ VOICE:
 PERSONALIZATION:
 - Score against THIS user's preference toggles, tolerance, intensity target, and adventure mode (safe = stay close to what works, explore = adjacent new things, surprise = wildcards welcome).
 - whyThisScore must tie the score to their profile in one sentence (e.g. "Limonene-forward matches your citrus + creative lean, but 31% THC is punchy for your medium tolerance.").
+
+SCORING RUBRIC — follow this arithmetic exactly. The same product and the same
+profile MUST always produce the same score. Do not score on general impression.
+
+Start at 50, then adjust:
++8  for each effect the user wants that this product credibly delivers (cap +24)
++5  for each flavor/terpene the user likes that is actually present (cap +10)
++6  if potency suits their stated tolerance and intensity target
+-12 for each item on the user's "avoid" list this product plausibly triggers (no cap — these dominate)
+-8  if potency clearly overshoots their tolerance/intensity, -5 if it clearly undershoots
+-10 if the product type is a poor fit for what they described wanting
+Adventure mode: safe = -5 for an unfamiliar profile; explore = no adjustment;
+surprise = +5 for something novel.
+Session history (when provided): up to +15 when the profile closely matches a
+4-5★ logged session, up to -15 when it matches a 1-2★ one.
+
+Then clamp to 0-100 and round to the nearest whole number.
+
+EVIDENCE DISCIPLINE — this is what keeps scores stable:
+- Only award or deduct points for attributes you can actually support from the
+  label, the web search context, or well-documented facts about the product.
+- Do NOT award or deduct for attributes you are guessing at. An unknown
+  attribute contributes 0 — it never moves the score in either direction.
+- If cannabinoid and terpene data are both unknown, the score must stay within
+  45-55 regardless of how appealing the product sounds, and confidence is at
+  most "medium".
+
+BUY DECISION BANDS (mechanical, no judgement):
+- 72-100 → "Buy"
+- 45-71  → "Maybe"
+- 0-44   → "Skip"
 ${historyDigest ? `
 SESSION HISTORY (this user's real logged outcomes, newest first — weigh heavily; it beats generic strain lore):
 ${historyDigest}
@@ -285,8 +363,27 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     let searchLabel = '';
     let searchFound = false;
 
-    // First-pass analysis
-    const raw = await analyzeWithModel(client, input, model);
+    // The pipeline is deliberately the same shape on every run: identify →
+    // search → score. Previously the search only fired when the model happened
+    // to report low confidence, so identical input could take two different
+    // paths and produce very different scores and terpene data.
+    let searchSubject = buildSearchSubject(question, '');
+    if (imageDataUrl) {
+      const identified = await identifyFromImage(client, model, imageDataUrl, question);
+      if (identified) searchSubject = identified;
+    }
+
+    let searchContext: string | null = null;
+    const hasSubject = Boolean(searchSubject) && !/^unknown(?:\s+strain)?$/i.test(searchSubject);
+    if (hasSubject && process.env.TAVILY_API_KEY) {
+      searchLabel = searchSubject;
+      searchTerm = `${searchSubject} cannabis strain terpenes THC CBD effects`.slice(0, 100);
+      searchAttempted = true;
+      searchContext = await searchWeb(searchTerm);
+      searchFound = Boolean(searchContext);
+    }
+
+    const raw = await analyzeWithModel(client, input, model, searchContext || undefined);
     let parsed: unknown = {};
     try {
       parsed = JSON.parse(raw);
@@ -295,32 +392,8 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     }
     let report = normalizeReport(parsed);
     report = scrubHallucinations(report);
-
-    // If confidence is low and web search is available, enhance with search
-    if (report.confidence === 'low' && process.env.TAVILY_API_KEY) {
-      const searchSubject = buildSearchSubject(question, report.strainName);
-      searchLabel = searchSubject;
-      searchTerm = `${searchSubject} cannabis strain THC CBD effects`.slice(0, 100);
-      searchAttempted = true;
-      const searchResults = await searchWeb(searchTerm);
-
-      if (searchResults) {
-        searchFound = true;
-        // Re-analyze with search context
-        const enhancedRaw = await analyzeWithModel(client, input, model, searchResults);
-        let enhancedParsed: unknown = {};
-        try {
-          enhancedParsed = JSON.parse(enhancedRaw);
-        } catch {
-          enhancedParsed = { quickTake: enhancedRaw };
-        }
-        const enhancedReport = normalizeReport(enhancedParsed);
-        // Only use enhanced if confidence improved
-        if (enhancedReport.confidence !== 'low') {
-          report = enhancedReport;
-        }
-      }
-    }
+    // Derive the verdict from the score so the two can never disagree.
+    report = { ...report, buyDecision: decisionForScore(report.matchScore) };
 
     return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, usedHistory: Boolean(historyDigest) });
   } catch (err: any) {
