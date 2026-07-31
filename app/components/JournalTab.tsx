@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { feelingOptions } from '@/lib/defaults';
 import { SavedReport } from '@/lib/types';
 import { authFetch } from '@/lib/supabaseBrowser';
+import { trackEvent } from '@/lib/analytics';
 
 export function Stars({ value, onChange }: { value: number; onChange?: (v: number) => void }) {
   return <div className={`stars ${onChange ? 'tappable' : ''}`}>
@@ -117,6 +118,12 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
         await onLogged();
         close();
         showToast(isEdit ? 'Updated ✍️' : 'Logged 📓 Future you says thanks.');
+        trackEvent(isEdit ? 'session_edited' : 'session_logged', {
+          rating,
+          feelings: feelings.length,
+          hasNotes: Boolean(notes.trim()),
+          linkedToReport: !isEdit && pickedReportId !== 'other' && Boolean(pickedReportId)
+        });
       } else if (data?.needsMigration) {
         showToast('One-time setup needed: run supabase-schema.sql in Supabase.');
       } else if (data?.localOnly) {

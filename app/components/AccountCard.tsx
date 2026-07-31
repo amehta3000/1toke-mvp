@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { safeGet } from '@/lib/storage';
+import { trackEvent } from '@/lib/analytics';
 
 export default function AccountCard({ email, isAnonymous, onChanged, showToast }: {
   email: string | null;
@@ -111,6 +112,7 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
       setAddr('');
       await onChanged();
       showToast(mode === 'link' ? 'Journal secured 🔐 It follows you anywhere now.' : 'Signed in ✅ Your journal is synced.');
+      trackEvent('account_verified', { mode });
     } finally {
       setBusy(false);
     }

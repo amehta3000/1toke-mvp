@@ -6,6 +6,7 @@ import { Preferences, SavedReport, StrainReport } from '@/lib/types';
 import { normalizeReport } from '@/lib/report';
 import { getDeviceId, safeGet, safeSet } from '@/lib/storage';
 import { getSupabaseBrowser, authFetch } from '@/lib/supabaseBrowser';
+import { trackEvent } from '@/lib/analytics';
 import Onboarding from './components/Onboarding';
 import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
@@ -180,6 +181,7 @@ export default function Page() {
   function finishOnboarding() {
     safeSet(onboardedKey, '1');
     setShowOnboarding(false);
+    trackEvent('onboarding_finished', { wants: activeWants.length });
   }
 
   function onImage(file: File | null) {
@@ -219,20 +221,31 @@ export default function Page() {
           data?.error?.hint ? data.error.hint : ''
         ].filter(Boolean).join(' | ');
         setAnalyzeError({ message, details });
+        trackEvent('scan_failed', { reason: String(data?.error?.code || res.status) });
         return;
       }
 
       if (!data?.report) {
         setAnalyzeError({ message: 'No report was returned. Please try again.' });
+        trackEvent('scan_failed', { reason: 'empty_report' });
         return;
       }
 
-      setReport(normalizeReport(data.report));
+      const normalized = normalizeReport(data.report);
+      setReport(normalized);
       setSearchAttempted(data.searchAttempted || false);
       setSearchTerm(data.searchLabel || data.searchTerm || '');
       setTab('scan');
+      trackEvent('scan_completed', {
+        input: image ? 'photo' : 'text',
+        decision: normalized.buyDecision,
+        confidence: normalized.confidence,
+        searchFound: Boolean(data.searchFound),
+        usedHistory: Boolean(data.usedHistory)
+      });
     } catch {
       setAnalyzeError({ message: 'Network error while analyzing. Check your connection and try again.' });
+      trackEvent('scan_failed', { reason: 'network' });
     } finally {
       setBusy(false);
     }
@@ -251,6 +264,7 @@ export default function Page() {
       if (data?.saved) {
         await loadSavedReports(deviceId);
         showToast('Saved 🛒 Log the session in Journal after you try it.');
+        trackEvent('report_saved', { decision: report.buyDecision });
       } else if (data?.localOnly) {
         showToast('Saved locally — database not configured.');
       } else {
