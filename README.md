@@ -43,7 +43,7 @@ NEXT_PUBLIC_SUPABASE_URL=...
 SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-## Enable accounts (email + 6-digit code)
+## Enable accounts (email + one-time code)
 
 Accounts are optional and frictionless: every visitor gets a silent anonymous
 Supabase user, and adding an email later upgrades that same user — no data
@@ -54,17 +54,45 @@ migration, no passwords. One-time setup:
    the legacy device-id mode.
 2. **Anonymous sign-ins**: Supabase dashboard → Authentication → Sign In /
    Providers → enable **Anonymous sign-ins**.
-3. **Email templates**: Authentication → Email Templates. In both **Magic
-   Link** and **Change Email Address**, make sure the 6-digit code is in the
-   body, e.g. `<p>Your 1Toke code: <b>{{ .Token }}</b></p>`. (Codes instead of
-   links because the iOS home-screen app and Safari don't share sessions — a
-   link would sign in the wrong one.)
-4. **Re-run `supabase-schema.sql`** to enable row-level security (blocks
+3. **Custom SMTP — required, not optional.** Supabase locks email template
+   editing behind custom SMTP, and its default template sends only a sign-in
+   *link* with no code, so the OTP flow cannot work until this is set up.
+   Configure it under Authentication → Emails → SMTP settings.
+
+   Production uses **Brevo** (free tier ~300 emails/day, multiple domains).
+   Two things that will silently break sending if you get them wrong:
+
+   - **Username is not your Brevo account email.** Brevo issues a dedicated
+     SMTP login like `b34e81001@smtp-brevo.com` — copy it (and the SMTP key
+     used as the password) from Brevo → Transactional → Email → Real time →
+     Configuration, or Settings → SMTP & API.
+   - **The sender address must exist as a verified sender in Brevo.** Sending
+     from an unknown address is rejected during the SMTP handshake, so it
+     never reaches the transactional logs and looks like nothing happened.
+     Add it under Brevo → Settings → Senders, domains, IPs → **Senders**, and
+     authenticate the domain itself under the **Domains** tab (DKIM + DMARC
+     DNS records) so mail isn't treated as spam. Avoid gmail/freemail
+     senders — they fail Google/Yahoo/Microsoft's sender requirements.
+
+   Brevo values: host `smtp-relay.brevo.com`, port `587`, username = the
+   generated `…@smtp-brevo.com` login, password = the SMTP key, sender
+   `noreply@1toke.co`. (Any SMTP provider works — only these four fields
+   change. Resend is a good alternative, but its free tier allows just one
+   verified domain.)
+4. **Email templates**: Authentication → Emails. Paste
+   `supabase/email-templates/magic-link-otp.html` into **Magic link or OTP**
+   (subject: `Your 1Toke code`) and
+   `supabase/email-templates/change-email.html` into **Change Email Address**
+   (subject: `Confirm your email for 1Toke`). Both are code-only by design —
+   an installed home-screen app and Safari keep separate sessions, so a
+   tapped link would sign in the wrong one.
+5. **Re-run `supabase-schema.sql`** to enable row-level security (blocks
    direct table access with the now-public anon key; the server's service
    role is unaffected).
-5. **Before real testers**: Supabase's built-in email sender allows only a
-   few messages per hour. Wire custom SMTP (Authentication → Emails → SMTP
-   settings; Resend's free tier works) on your domain.
+
+Leave the **captcha** option for anonymous sign-ins **off** unless the client
+is updated to send a captcha token — enabling it would break the silent
+anonymous sign-in every visitor depends on.
 
 How identity flows: API routes verify the caller's Supabase JWT and scope all
 reads/writes to that user id, falling back to the legacy device id only for
