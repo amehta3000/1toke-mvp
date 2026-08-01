@@ -1,3 +1,9 @@
+-- SAFE TO RE-RUN ON A LIVE DATABASE.
+-- Every statement here is idempotent and non-destructive: `create table if not
+-- exists` skips tables that already have data, and enabling RLS does not touch
+-- rows. There is deliberately no DROP/DELETE/TRUNCATE in this file — never add
+-- one, and never paste ad-hoc cleanup SQL in alongside it.
+
 create table if not exists reports (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
