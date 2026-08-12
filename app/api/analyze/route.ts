@@ -3,6 +3,9 @@ import OpenAI from 'openai';
 import { mockAnalyze } from '@/lib/mock';
 import { normalizeReport, toDisplayText } from '@/lib/report';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { resolveUserId } from '@/lib/serverAuth';
+import { getPreferenceProfile } from '@/lib/preferenceStore';
+import { topSignals } from '@/lib/preferenceVector';
 
 export const runtime = 'nodejs';
 
@@ -40,8 +43,8 @@ function scrubHallucinations(report: any): any {
 // Pull the user's recent session logs and turn them into a compact digest the
 // model can actually learn from. This is what makes the app get smarter as
 // the journal grows.
-async function buildHistoryDigest(deviceId: string | null): Promise<string | null> {
-  if (!deviceId) return null;
+async function buildHistoryDigest(userId: string | null): Promise<string | null> {
+  if (!userId) return null;
   const supabase = getSupabaseAdmin();
   if (!supabase) return null;
 
@@ -49,7 +52,7 @@ async function buildHistoryDigest(deviceId: string | null): Promise<string | nul
     const { data, error } = await supabase
       .from('sessions')
       .select('created_at, strain_name, rating, feelings, notes, would_buy_again, reports(report)')
-      .eq('user_id', deviceId)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(10);
     if (error || !data?.length) return null;
@@ -74,6 +77,25 @@ async function buildHistoryDigest(deviceId: string | null): Promise<string | nul
     return lines.join('\n');
   } catch {
     return null; // History is a bonus, never a blocker.
+  }
+}
+
+// Turn the learned preference vector (see lib/preferenceVector.ts) into a
+// short, deterministic digest for the prompt. Unlike the history digest above
+// this isn't the LLM inferring a pattern from a pile of raw sessions — the
+// weighting math already happened in code; the model just has to apply it.
+async function buildLearnedSignalDigest(userId: string | null): Promise<string | null> {
+  if (!userId) return null;
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
+
+  try {
+    const profile = await getPreferenceProfile(supabase, userId);
+    const signals = topSignals(profile.vector);
+    if (!signals.length) return null;
+    return signals.map(([key, score]) => `${key}: ${score > 0 ? '+' : ''}${score.toFixed(2)}`).join(', ');
+  } catch {
+    return null; // Same as history: a bonus, never a blocker.
   }
 }
 
@@ -262,7 +284,14 @@ export async function POST(req: NextRequest) {
     imageDataUrl = `data:${file.type};base64,${bytes.toString('base64')}`;
   }
 
-  const historyDigest = await buildHistoryDigest(deviceId);
+  // A verified session wins over the raw device id, same rule used when a
+  // rating is recorded (lib/preferenceStore) — otherwise a signed-in user's
+  // learned vector would be written under one id and read back under another.
+  const userId = await resolveUserId(req, deviceId);
+  const [historyDigest, learnedSignal] = await Promise.all([
+    buildHistoryDigest(userId),
+    buildLearnedSignalDigest(userId)
+  ]);
 
   const system = `You are 1Toke: a sharp, honest budtender friend helping an adult make a fast in-store buying decision. You hype products that genuinely fit this person and you are blunt when something is wrong for them. Never provide medical claims. Return ONLY valid JSON.
 
@@ -309,6 +338,10 @@ SESSION HISTORY (this user's real logged outcomes, newest first — weigh heavil
 ${historyDigest}
 
 If the product resembles something they logged (same strain, terpene profile, or potency band), say so explicitly in quickTake or whyThisScore, e.g. "Same limonene-heavy profile as L'Orange, which you rated 5/5." Low-rated history with a similar profile should drag the score down and show up in watchOuts.` : ''}
+${learnedSignal ? `
+LEARNED PREFERENCE SIGNAL (computed from this user's actual rating outcomes over time, not self-reported — score from -1 to 1):
+${learnedSignal}
+On a normal key, positive means they consistently respond well when a product delivers it, negative means it works against them even though it's present. On an avoid* key, positive reinforces that the toggle is right and should still cost points; negative means they've tolerated it well before, so weigh that avoid-list deduction lighter than the toggle alone would suggest. Treat |score| ≥ 0.5 as at least as trustworthy as the manual preference toggles.` : ''}
 
 STRAIN TYPE:
 - strainType: one of "Sativa", "Indica", "Hybrid — sativa-leaning", "Hybrid — indica-leaning", "Hybrid — balanced", or "" if you genuinely don't know. Use the label or well-documented lineage; do not guess from the name alone.
@@ -395,7 +428,7 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     // Derive the verdict from the score so the two can never disagree.
     report = { ...report, buyDecision: decisionForScore(report.matchScore) };
 
-    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, usedHistory: Boolean(historyDigest) });
+    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, usedHistory: Boolean(historyDigest), usedLearnedSignal: Boolean(learnedSignal) });
   } catch (err: any) {
     const payload = toErrorPayload(err);
     console.error('Analyze API failed', {

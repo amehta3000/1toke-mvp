@@ -11,6 +11,17 @@ export type Preferences = Record<PreferenceKey, boolean> & {
   mode: 'safe' | 'explore' | 'surprise';
 };
 
+// Learned signal, separate from the manual onboarding toggles above. Each
+// score is in [-1, 1]: how much this person actually seems to care about
+// that key, inferred from rated sessions rather than set by hand.
+export type PreferenceVector = Partial<Record<PreferenceKey, number>>;
+
+export type PreferenceProfile = {
+  vector: PreferenceVector;
+  sampleCount: number;
+  updatedAt: string;
+};
+
 export type StrainReport = {
   strainName: string;
   brand?: string;

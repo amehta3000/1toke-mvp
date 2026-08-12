@@ -9,9 +9,16 @@ create table if not exists reports (
 create table if not exists user_preferences (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
-  preferences jsonb not null,
+  preferences jsonb not null default '{}'::jsonb,
+  -- Learned preference vector: PreferenceKey -> score in [-1, 1], nudged by
+  -- every rated session (see lib/preferenceVector.ts). Distinct from the
+  -- onboarding toggles above — this is what closes the feedback loop.
+  vector jsonb not null default '{}'::jsonb,
+  sample_count int not null default 0,
   updated_at timestamptz not null default now()
 );
+
+create unique index if not exists user_preferences_user_id_idx on user_preferences (user_id);
 
 -- Session logs: "how it actually went", logged after the fact.
 -- A session can reference a saved report (the product you bought) or stand

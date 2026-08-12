@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
+import { recordRatingSignal } from '@/lib/preferenceStore';
 
 // "relation does not exist" — the sessions migration hasn't been run yet.
 function isMissingTable(error: { code?: string } | null): boolean {
@@ -60,6 +61,17 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Feed this rating into the learned preference vector. Best effort — a
+  // failure here must never take down the session save itself.
+  if (userId) {
+    await recordRatingSignal(supabase, userId, {
+      rating: row.rating,
+      feelings: row.feelings,
+      wouldBuyAgain: row.would_buy_again
+    });
+  }
+
   return NextResponse.json({ saved: true, session: data });
 }
 
