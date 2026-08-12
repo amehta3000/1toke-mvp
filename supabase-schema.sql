@@ -18,6 +18,13 @@ create table if not exists user_preferences (
   updated_at timestamptz not null default now()
 );
 
+-- CREATE TABLE IF NOT EXISTS above is a no-op on a database that already has
+-- this table, so it can't backfill columns added after the table's first
+-- deploy. Add them explicitly for that case.
+alter table user_preferences alter column preferences set default '{}'::jsonb;
+alter table user_preferences add column if not exists vector jsonb not null default '{}'::jsonb;
+alter table user_preferences add column if not exists sample_count int not null default 0;
+
 create unique index if not exists user_preferences_user_id_idx on user_preferences (user_id);
 
 -- Session logs: "how it actually went", logged after the fact.
