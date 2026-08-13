@@ -99,36 +99,93 @@ async function buildLearnedSignalDigest(userId: string | null): Promise<string |
   }
 }
 
+const FACTS_TTL_DAYS = 30;
+
+function cacheKeyFor(subject: string): string {
+  return subject.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, '-').slice(0, 120);
+}
+
+// Product research is user-independent and expensive to redo, and redoing it
+// is exactly what made the same product score differently each scan.
+async function getCachedFacts(key: string): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase || !key) return null;
+  try {
+    const { data, error } = await supabase
+      .from('product_facts')
+      .select('context, created_at')
+      .eq('cache_key', key)
+      .maybeSingle();
+    if (error || !data?.context) return null;
+    const ageMs = Date.now() - new Date(data.created_at).getTime();
+    if (ageMs > FACTS_TTL_DAYS * 86400000) return null;
+    return data.context;
+  } catch {
+    return null; // Cache miss on any problem, including a missing table.
+  }
+}
+
+async function putCachedFacts(key: string, subject: string, context: string): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  if (!supabase || !key || !context) return;
+  try {
+    await supabase
+      .from('product_facts')
+      .upsert({ cache_key: key, subject, context, created_at: new Date().toISOString() }, { onConflict: 'cache_key' });
+  } catch {
+    // Caching is an optimisation; never fail the request over it.
+  }
+}
+
+// One attempt at Tavily. Advanced depth + raw content because terpene
+// percentages live in page tables that the short `content` snippet truncates.
+async function searchOnce(query: string, apiKey: string, timeoutMs: number): Promise<string | null> {
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query: query.slice(0, 380),
+      max_results: 5,
+      search_depth: 'advanced',
+      include_answer: true,
+      include_raw_content: true
+    }),
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as any;
+  const answer = data.answer ? `Summary: ${data.answer}` : '';
+  const results = data.results?.slice(0, 5) || [];
+  const resultTexts = results
+    .map((r: any) => {
+      // Prefer raw page text, but keep it bounded so the prompt stays sane.
+      const body = String(r.raw_content || r.content || '').slice(0, 1200);
+      return body.trim() ? `${r.title}: ${body}` : '';
+    })
+    .filter((s: string) => s.trim());
+
+  const combined = [answer, ...resultTexts].filter(Boolean).join('\n\n');
+  return combined || null;
+}
+
+// The old version used a 5s timeout and swallowed every failure, so a slow
+// search silently produced a terpene-less report and a lower score with no
+// signal that anything went wrong. Advanced searches routinely exceed 5s.
 async function searchWeb(query: string): Promise<string | null> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) return null;
 
-  try {
-    const res = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query: query.slice(0, 100),
-        max_results: 5,
-        include_answer: true
-      }),
-      signal: AbortSignal.timeout(5000)
-    });
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as any;
-    const answer = data.answer ? `Summary: ${data.answer}` : '';
-    const results = data.results?.slice(0, 5) || [];
-    const resultTexts = results
-      .map((r: any) => `${r.title}: ${r.content || ''}`)
-      .filter((s: string) => s.trim());
-
-    const combined = [answer, ...resultTexts].filter(Boolean).join(' | ');
-    return combined || null;
-  } catch {
-    return null;
+  for (const timeoutMs of [12000, 12000]) {
+    try {
+      const result = await searchOnce(query, apiKey, timeoutMs);
+      if (result) return result;
+    } catch (err) {
+      console.warn('Tavily search attempt failed', { query: query.slice(0, 80), err: String(err) });
+    }
   }
+  return null;
 }
 
 function buildSearchSubject(question: string, strainName: string): string {
@@ -320,14 +377,30 @@ Session history (when provided): up to +15 when the profile closely matches a
 
 Then clamp to 0-100 and round to the nearest whole number.
 
-EVIDENCE DISCIPLINE — this is what keeps scores stable:
-- Only award or deduct points for attributes you can actually support from the
-  label, the web search context, or well-documented facts about the product.
-- Do NOT award or deduct for attributes you are guessing at. An unknown
-  attribute contributes 0 — it never moves the score in either direction.
-- If cannabinoid and terpene data are both unknown, the score must stay within
+EVIDENCE TIERS — score using the best tier available, and say which you used:
+- VERIFIED (full weight): values you can read off the label photo, lab results,
+  or the web search context. Terpene lists and THC/CBD numbers from these are
+  facts about this product.
+- TYPICAL (half weight, and you MUST label it): for strains whose profile is
+  genuinely well documented, you may use the strain's characteristic terpene
+  and effect profile even without this batch's lab data. Say so plainly —
+  "typical for this strain, not this batch's numbers" — in quickTake or
+  whyThisScore, put the terpenes in the terpenes array, and add "this batch's
+  lab data" to missingInfo. Cannabinoid percentages vary far too much between
+  batches to state from memory: leave cannabinoids "" unless verified.
+- UNKNOWN (zero weight): a strain you do not genuinely know. Do not guess.
+  Unknown attributes never move the score in either direction.
+
+Do not report a well-known strain as entirely unknown just because the search
+came back thin — fall back to the TYPICAL tier and label it.
+- If you have neither VERIFIED nor TYPICAL evidence, the score must stay within
   45-55 regardless of how appealing the product sounds, and confidence is at
-  most "medium".
+  most "medium". In that case whyThisScore must say plainly that the score is
+  middling because nothing could be verified — not invent a reason — and
+  missingInfo must list what is missing.
+- Web search context, when provided, is the best available evidence. Read it
+  carefully for a dominant terpene list and THC/CBD percentages before
+  concluding anything is unknown.
 
 BUY DECISION BANDS (mechanical, no judgement):
 - 72-100 → "Buy"
@@ -407,12 +480,21 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     }
 
     let searchContext: string | null = null;
+    let searchCached = false;
     const hasSubject = Boolean(searchSubject) && !/^unknown(?:\s+strain)?$/i.test(searchSubject);
-    if (hasSubject && process.env.TAVILY_API_KEY) {
+    if (hasSubject) {
       searchLabel = searchSubject;
-      searchTerm = `${searchSubject} cannabis strain terpenes THC CBD effects`.slice(0, 100);
+      searchTerm = `${searchSubject} cannabis strain dominant terpene profile THC CBD percentage effects`;
       searchAttempted = true;
-      searchContext = await searchWeb(searchTerm);
+
+      const key = cacheKeyFor(searchSubject);
+      searchContext = await getCachedFacts(key);
+      searchCached = Boolean(searchContext);
+
+      if (!searchContext && process.env.TAVILY_API_KEY) {
+        searchContext = await searchWeb(searchTerm);
+        if (searchContext) await putCachedFacts(key, searchSubject, searchContext);
+      }
       searchFound = Boolean(searchContext);
     }
 
@@ -425,10 +507,13 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     }
     let report = normalizeReport(parsed);
     report = scrubHallucinations(report);
+    // Round to the nearest 5: the score is not meaningfully precise to a
+    // single point, and showing 57 vs 60 implies a difference that isn't real.
+    const rounded = Math.max(0, Math.min(100, Math.round(report.matchScore / 5) * 5));
     // Derive the verdict from the score so the two can never disagree.
-    report = { ...report, buyDecision: decisionForScore(report.matchScore) };
+    report = { ...report, matchScore: rounded, buyDecision: decisionForScore(rounded) };
 
-    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, usedHistory: Boolean(historyDigest), usedLearnedSignal: Boolean(learnedSignal) });
+    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest), usedLearnedSignal: Boolean(learnedSignal) });
   } catch (err: any) {
     const payload = toErrorPayload(err);
     console.error('Analyze API failed', {
