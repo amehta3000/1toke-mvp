@@ -1,9 +1,30 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
-import { safeGet } from '@/lib/storage';
+import { safeGet, safeSet } from '@/lib/storage';
 import { trackEvent } from '@/lib/analytics';
+
+// Checking email means leaving the app, and iOS routinely evicts a backgrounded
+// PWA — which wiped the in-memory "waiting for a code" state and dumped people
+// back on the email box with a code they had nowhere to type. Persist the
+// pending step so returning to the app resumes it.
+const pendingKey = '1toke:pendingVerify';
+const PENDING_TTL_MS = 60 * 60 * 1000; // matches the OTP's ~1h lifetime
+
+type Pending = { addr: string; mode: 'link' | 'signin'; at: number };
+
+function readPending(): Pending | null {
+  try {
+    const raw = safeGet(pendingKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Pending;
+    if (!parsed?.addr || Date.now() - parsed.at > PENDING_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 export default function AccountCard({ email, isAnonymous, onChanged, showToast }: {
   email: string | null;
@@ -15,8 +36,29 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
   const [mode, setMode] = useState<'link' | 'signin'>('link');
   const [addr, setAddr] = useState('');
   const [code, setCode] = useState('');
-  const [prevToken, setPrevToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Resume a code entry that was interrupted by switching to the mail app.
+  useEffect(() => {
+    const pending = readPending();
+    if (pending) {
+      setAddr(pending.addr);
+      setMode(pending.mode);
+      setStage('code');
+    }
+  }, []);
+
+  function startPending(target: string, nextMode: 'link' | 'signin') {
+    safeSet(pendingKey, JSON.stringify({ addr: target, mode: nextMode, at: Date.now() }));
+    setMode(nextMode);
+    setStage('code');
+  }
+
+  function clearPending() {
+    safeSet(pendingKey, '');
+    setStage('idle');
+    setCode('');
+  }
 
   if (!getSupabaseBrowser()) return null;
 
@@ -46,14 +88,12 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
     setBusy(true);
     try {
       const { data: { session } } = await sb.auth.getSession();
-      setPrevToken(session?.access_token || null);
 
       if (!session) {
         // No anonymous session (e.g. anonymous sign-ins disabled): plain OTP sign-in/up.
         const { error } = await sb.auth.signInWithOtp({ email: target });
         if (error) { showToast(describeError(error, 'Could not send the code. Try again in a minute.')); return; }
-        setMode('signin');
-        setStage('code');
+        startPending(target, 'signin');
         showToast('Code sent 📬 Check your inbox.');
         return;
       }
@@ -62,8 +102,7 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
       // keeps every row they already have, zero migration.
       const { error } = await sb.auth.updateUser({ email: target });
       if (!error) {
-        setMode('link');
-        setStage('code');
+        startPending(target, 'link');
         showToast('Code sent 📬 Check your inbox.');
         return;
       }
@@ -76,8 +115,7 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
       // this device's anonymous data via /api/claim after verification.
       const { error: otpError } = await sb.auth.signInWithOtp({ email: target, options: { shouldCreateUser: false } });
       if (otpError) { showToast(describeError(otpError, 'Could not send the code. Try again in a minute.')); return; }
-      setMode('signin');
-      setStage('code');
+      startPending(target, 'signin');
       showToast('Welcome back 👋 Code sent — check your inbox.');
     } finally {
       setBusy(false);
@@ -91,6 +129,11 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
     if (token.length < 6) { showToast('Enter the whole code from the email'); return; }
     setBusy(true);
     try {
+      // Capture the outgoing (anonymous) token here rather than at send time:
+      // the app may have reloaded in between, and this survives that.
+      const { data: { session: outgoing } } = await sb.auth.getSession();
+      const prevToken = outgoing?.access_token || null;
+
       const type = mode === 'link' ? 'email_change' as const : 'email' as const;
       const { data, error } = await sb.auth.verifyOtp({ email: addr.trim().toLowerCase(), token, type });
       if (error) { showToast(describeError(error, 'That code didn’t work — double-check it or resend.')); return; }
@@ -107,8 +150,7 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
         } catch { /* merge is best-effort; the account itself is signed in */ }
       }
 
-      setStage('idle');
-      setCode('');
+      clearPending();
       setAddr('');
       await onChanged();
       showToast(mode === 'link' ? 'Journal secured 🔐 It follows you anywhere now.' : 'Signed in ✅ Your journal is synced.');
@@ -148,16 +190,23 @@ export default function AccountCard({ email, isAnonymous, onChanged, showToast }
       <p className="small">Right now everything lives on this device only. Add your email and your journal follows you anywhere — no password, just a code from your inbox. Already have an account? Same box.</p>
       <input className="input" type="email" inputMode="email" autoComplete="email" value={addr} onChange={e => setAddr(e.target.value)} placeholder="you@example.com" />
       <button className="primary" onClick={sendCode} disabled={busy}>{busy ? 'Sending…' : 'Email me a code'}</button>
+      {/* Escape hatch: if someone has a code but the app lost its place, this
+          gets them to the entry screen without emailing a second code. */}
+      <button className="tuning small" onClick={() => setStage('code')}>Already have a code? Enter it →</button>
     </>}
     {stage === 'code' && <>
-      <p className="small">We sent a code to <b>{addr.trim()}</b>. Type it here — that&apos;s the whole thing.</p>
+      <p className="small">{addr.trim()
+        ? <>We sent a code to <b>{addr.trim()}</b>. Type it in — checking your email won&apos;t lose your place.</>
+        : <>Enter the email you requested the code for, then the code itself.</>}</p>
+      {!addr.trim() && <input className="input" type="email" inputMode="email" autoComplete="email" value={addr} onChange={e => setAddr(e.target.value)} placeholder="you@example.com" />}
       {/* Supabase's OTP length is configurable (6–10), so don't cap this at 6:
           a shorter maxLength silently truncates and every code looks wrong. */}
       <input className="input" inputMode="numeric" autoComplete="one-time-code" maxLength={10} value={code} onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="Paste your code" />
       <div className="row">
-        <button className="secondary" onClick={() => { setStage('idle'); setCode(''); }} disabled={busy}>Back</button>
+        <button className="secondary" onClick={clearPending} disabled={busy}>Back</button>
         <button className="primary" onClick={verify} disabled={busy}>{busy ? 'Checking…' : 'Verify'}</button>
       </div>
+      <button className="tuning small" onClick={sendCode} disabled={busy}>Didn&apos;t get it? Send another code</button>
     </>}
   </div>;
 }
