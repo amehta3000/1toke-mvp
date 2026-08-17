@@ -45,8 +45,8 @@ export const chipGroups = [
 
 export const labels: Record<string, string> = {
   creative: '🎨 Creative', social: '💬 Social', focused: '🎯 Focused', euphoric: '✨ Euphoric', calm: '😌 Calm', sleepy: '😴 Sleepy', bodyRelaxed: '🛋 Body',
-  uplifting: '🌞 Uplifting', energetic: '⚡ Energetic', happy: '😄 Happy', music: '🎵 Music', daytime: '☀️ Daytime',
-  painRelief: '🩹 Pain relief', cozy: '📺 Cozy couch', nighttime: '🌙 Nighttime', unwind: '🧘 Unwind', appetite: '🍽 Appetite',
+  uplifting: '🌞 Uplifting', energetic: '⚡ Energetic', happy: '😄 Happy', music: '🎵 Music boost', daytime: '☀️ Daytime',
+  painRelief: '🩹 Pain relief', cozy: '📺 Cozy couch', nighttime: '🌙 Nighttime', unwind: '🧘 Unwind', appetite: '🍽 Appetite boost',
   avoidAnxious: '😬 Anxiety', avoidFoggy: '🌫 Fog', avoidCouchLock: '🪨 Couch-lock', avoidHeavyComedown: '⬇ Heavy comedown', avoidMunchies: '🍕 Munchies',
   citrus: '🍋 Citrus', pine: '🌲 Pine', berry: '🫐 Berry', tropical: '🥭 Tropical', gas: '⛽ Gas', earthy: '🌱 Earthy', dessert: '🍪 Dessert'
 };
