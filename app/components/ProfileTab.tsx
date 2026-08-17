@@ -1,6 +1,7 @@
 'use client';
 
-import { chipGroups, labels, toleranceHints, modeHints } from '@/lib/defaults';
+import { useState } from 'react';
+import { chipGroups, coreKeys, labels, toleranceHints, modeHints, leanReadoutText } from '@/lib/defaults';
 import { Preferences } from '@/lib/types';
 
 export default function ProfileTab({ prefs, setPrefs, onReplaySetup }: {
@@ -8,8 +9,22 @@ export default function ProfileTab({ prefs, setPrefs, onReplaySetup }: {
   setPrefs: (fn: (p: Preferences) => Preferences) => void;
   onReplaySetup: () => void;
 }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
   function toggle(key: string) {
     setPrefs(p => ({ ...p, [key]: !p[key as keyof Preferences] }));
+  }
+
+  function toggleGroup(id: string) {
+    setExpandedGroups(s => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function chipBtn(k: string) {
+    return <button className={`chip ${prefs[k as keyof Preferences] ? 'active' : ''}`} key={k} onClick={() => toggle(k)}>{labels[k]}</button>;
   }
 
   return <div className="card stack">
@@ -17,12 +32,26 @@ export default function ProfileTab({ prefs, setPrefs, onReplaySetup }: {
     <h2>Tune your next session</h2>
     <p className="small">Everything here feeds directly into your match scores.</p>
 
-    {chipGroups.map(g => <div className="stack" key={g.title}>
-      <h3>{g.title}</h3>
-      <div className="chips">{g.keys.map(k =>
-        <button className={`chip ${prefs[k] ? 'active' : ''}`} key={k} onClick={() => toggle(k)}>{labels[k]}</button>
-      )}</div>
-    </div>)}
+    {chipGroups.map(g => {
+      const core = g.keys.filter(k => coreKeys.has(k));
+      const more = g.keys.filter(k => !coreKeys.has(k));
+      const isOpen = expandedGroups.has(g.title);
+      return <div className="stack" key={g.title}>
+        <h3>{g.title}</h3>
+        <div className="chips">{core.map(chipBtn)}</div>
+        {more.length > 0 && <>
+          {isOpen && <div className="chips">{more.map(chipBtn)}</div>}
+          <button className="tuning small" onClick={() => toggleGroup(g.title)}>
+            {isOpen ? 'Show fewer tags ▴' : `Show ${more.length} more tags ▾`}
+          </button>
+        </>}
+      </div>;
+    })}
+
+    <h3>Head or body?</h3>
+    <input type="range" min="0" max="100" value={prefs.headBodyLean} onChange={e => setPrefs(p => ({ ...p, headBodyLean: Number(e.target.value) }))} />
+    <div className="slider-ends small"><span>🧠 head</span><span>body 🛋</span></div>
+    <p className="small hint">{leanReadoutText(prefs.headBodyLean)} — scored against the actual terpenes, not the Indica/Sativa label.</p>
 
     <h3>How high is a good session?</h3>
     <input type="range" min="0" max="100" value={prefs.intensity} onChange={e => setPrefs(p => ({ ...p, intensity: Number(e.target.value) }))} />

@@ -345,6 +345,13 @@ Adventure mode: safe = -5 for an unfamiliar profile; explore = no adjustment;
 surprise = +5 for something novel.
 Session history (when provided): up to +15 when the profile closely matches a
 4-5★ logged session, up to -15 when it matches a 1-2★ one.
+Head/body lean: the user's preference toggles include headBodyLean, 0-100
+(0 = purely head/cerebral, 100 = purely body/physical). Estimate where this
+product's actual terpene profile falls on the same 0-100 scale (myrcene/
+linalool-dominant reads high/body; limonene/pinene/terpinolene-dominant reads
+low/head) — only when you have VERIFIED or TYPICAL terpene evidence, never
+guess this from the strain name alone. +8 if your estimate is within 15
+points of headBodyLean, -8 if it's 50+ points apart, otherwise no adjustment.
 
 Then clamp to 0-100 and round to the nearest whole number.
 
@@ -386,6 +393,17 @@ If the product resembles something they logged (same strain, terpene profile, or
 STRAIN TYPE:
 - strainType: one of "Sativa", "Indica", "Hybrid — sativa-leaning", "Hybrid — indica-leaning", "Hybrid — balanced", or "" if you genuinely don't know. Use the label or well-documented lineage; do not guess from the name alone.
 
+LABEL CHECK — Indica/Sativa/Hybrid printed on packaging is frequently marketing,
+not chemistry; the terpene profile is the more honest signal.
+- labelCheck: ONLY set this (as one sentence) when you have VERIFIED or TYPICAL
+  terpene evidence AND that evidence meaningfully conflicts with the printed
+  strainType — e.g. labeled "Indica" but limonene/pinene-forward (reads
+  head/uplifting), or labeled "Sativa" but myrcene-dominant (reads body/
+  sedating). Name the terpenes and say plainly it reads closer to the other
+  lean than the label suggests. Otherwise omit labelCheck entirely (do not
+  return an empty string) — most products won't have a meaningful mismatch,
+  and inventing one defeats the point.
+
 BRAND INTEL:
 - brandNotes: 1–2 short, useful sentences about the brand ONLY if you actually recognize it — reputation (well-regarded, budget shelf, premium), how established they are, and anything genuinely notable (solventless extraction, single-farm flower, known for accurate labeling, etc.). Same honest voice as quickTake. If you don't recognize the brand, return "" — never invent a reputation.
 
@@ -414,12 +432,12 @@ When confidence is LOW, set these fields explicitly:
 - buyDecision: "Maybe"
 - missingInfo: List exactly what data you need (e.g., "strain name", "THC percentage from label", "product label photo")
 
-Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array.`;
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array, labelCheck (string, omit if no meaningful mismatch).`;
 
   const userText = `Analyze this product/strain for a quick in-store buying decision.
 Question or typed label: ${question}
 User preference toggles: ${JSON.stringify(prefs)}
-Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array.`;
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array, labelCheck (string, omit if no meaningful mismatch).`;
 
   const input: any[] = [{ role: 'system', content: system }];
   input.push({

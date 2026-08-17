@@ -31,12 +31,17 @@ export async function GET(req: NextRequest) {
 
 function sessionFields(body: any) {
   const rating = Number(body.rating);
+  const lat = Number(body.locationLat);
+  const lng = Number(body.locationLng);
   return {
     strain_name: typeof body.strainName === 'string' ? body.strainName.slice(0, 120) : '',
     rating: Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null,
     feelings: Array.isArray(body.feelings) ? body.feelings.filter((f: unknown) => typeof f === 'string').slice(0, 12) : null,
     notes: typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim().slice(0, 2000) : null,
-    would_buy_again: typeof body.wouldBuyAgain === 'boolean' ? body.wouldBuyAgain : null
+    would_buy_again: typeof body.wouldBuyAgain === 'boolean' ? body.wouldBuyAgain : null,
+    // Opt-in only: the client only sends these when the person tapped "tag this location".
+    location_lat: Number.isFinite(lat) ? lat : null,
+    location_lng: Number.isFinite(lng) ? lng : null
   };
 }
 

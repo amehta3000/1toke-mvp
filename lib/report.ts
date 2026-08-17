@@ -70,6 +70,7 @@ export function normalizeReport(input: any): StrainReport {
     bestFor: toStringList(input?.bestFor),
     dosingGuidance: toDisplayText(input?.dosingGuidance, 'Start low and go slow.'),
     confidence,
-    missingInfo: toStringList(input?.missingInfo)
+    missingInfo: toStringList(input?.missingInfo),
+    labelCheck: input?.labelCheck ? toDisplayText(input.labelCheck, '') || undefined : undefined
   };
 }

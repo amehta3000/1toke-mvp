@@ -1,11 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import { StrainReport } from '@/lib/types';
+import { terpeneNote } from '@/lib/terpenes';
 
-const decisionMeta: Record<StrainReport['buyDecision'], { phrase: string; emoji: string; colorVar: string }> = {
-  Buy: { phrase: 'Solid pick', emoji: '✅', colorVar: 'var(--accent)' },
-  Maybe: { phrase: 'Could go either way', emoji: '🤔', colorVar: 'var(--warn)' },
-  Skip: { phrase: 'Skip it', emoji: '🚫', colorVar: 'var(--bad)' }
+const decisionMeta: Record<StrainReport['buyDecision'], { phrase: string; emoji: string; colorVar: string; pulse: boolean }> = {
+  Buy: { phrase: 'Solid pick', emoji: '✅', colorVar: 'var(--accent)', pulse: true },
+  Maybe: { phrase: 'Could go either way', emoji: '🤔', colorVar: 'var(--warn)', pulse: false },
+  Skip: { phrase: 'Skip it', emoji: '🚫', colorVar: 'var(--bad)', pulse: false }
 };
 
 function TypeBadge({ strainType }: { strainType?: string }) {
@@ -21,32 +23,60 @@ function TypeBadge({ strainType }: { strainType?: string }) {
   return <span className={`typebadge ${kind}`}>{icon} {strainType}</span>;
 }
 
+// The glance view is the whole point: word + score + one line, nothing else,
+// so a Buy/Maybe/Skip call is readable in a couple of seconds in a store.
+// Everything else — why, brand, terpenes, dosing — is one tap away.
 export function ReportCard({ report, onSave, saving, onDismiss }: { report: StrainReport; onSave: () => void; saving?: boolean; onDismiss: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [activeTerp, setActiveTerp] = useState<string | null>(null);
   const meta = decisionMeta[report.buyDecision];
+
   return <div className="card stack">
-    <div className="pillline">
-      <div>
-        <div className="kicker" style={{ color: meta.colorVar }}>{meta.emoji} {meta.phrase}</div>
-        <h2>{report.strainName}</h2>
-        <TypeBadge strainType={report.strainType} />
-      </div>
+    <div className={`verdict-core ${meta.pulse ? 'pulse' : ''}`}>
+      {report.strainName && report.strainName !== 'Unknown strain' && report.strainName !== 'Unknown' &&
+        <p className="small scanned-name">{report.strainName}</p>}
       <div className="score" style={{ '--score': report.matchScore, '--ring': meta.colorVar } as any}><span>{report.matchScore}</span></div>
+      <div className="verdict-word" style={{ color: meta.colorVar }}>{meta.emoji} {report.buyDecision}</div>
+      <p className="verdict-quicktake"><b>{report.quickTake}</b></p>
     </div>
-    <p style={{ color: meta.colorVar }}><b>{report.quickTake}</b></p>
-    {report.whyThisScore && <p className="small why">📈 {report.whyThisScore}</p>}
-    <div className="metric"><b>Brand / type</b><span>{report.brand || 'Unknown'} · {report.productType || 'Unknown'}</span></div>
-    {report.brandNotes && <p className="small brandnotes">🏷 {report.brandNotes}</p>}
-    <div className="metric"><b>Cannabinoids</b><span>{report.cannabinoids || 'Unknown'}</span></div>
-    <div className="metric"><b>Terpenes</b><span>{report.terpenes?.join(', ') || 'Unknown'}</span></div>
-    {report.expectedEffects.length > 0 && <><h3>Expect</h3><div className="chips">{report.expectedEffects.map(x => <span className="chip active" key={x}>{x}</span>)}</div></>}
-    {report.bestFor.length > 0 && <><h3>Best for</h3><div className="chips">{report.bestFor.map(x => <span className="chip best" key={x}>{x}</span>)}</div></>}
-    {report.watchOuts.length > 0 && <><h3>Watch outs</h3><div className="chips">{report.watchOuts.map(x => <span className="chip warn" key={x}>{x}</span>)}</div></>}
-    <p>{report.dosingGuidance}</p>
+
+    <button className="expand-toggle" onClick={() => setExpanded(e => !e)} aria-expanded={expanded}>
+      {expanded ? 'Hide details ▴' : 'Tap for details ▾'}
+    </button>
+
+    {expanded && <div className="stack details-body">
+      <TypeBadge strainType={report.strainType} />
+      {report.whyThisScore && <p className="small why">📈 {report.whyThisScore}</p>}
+      <div className="metric"><b>Brand / type</b><span>{report.brand || 'Unknown'} · {report.productType || 'Unknown'}</span></div>
+      {report.brandNotes && <p className="small brandnotes">🏷 {report.brandNotes}</p>}
+      <div className="metric"><b>Cannabinoids</b><span>{report.cannabinoids || 'Unknown'}</span></div>
+
+      {report.labelCheck && <div className="label-check">
+        <span className="lc-icon">🔍</span>
+        <p>{report.labelCheck}</p>
+      </div>}
+
+      {report.terpenes && report.terpenes.length > 0 && <div className="stack">
+        <h3>Terpenes — tap one</h3>
+        <div className="chips">
+          {report.terpenes.map(t =>
+            <button key={t} className={`chip terp ${activeTerp === t ? 'active' : ''}`} onClick={() => setActiveTerp(a => a === t ? null : t)}>{t}</button>
+          )}
+        </div>
+        {activeTerp && <p className="terp-note">{terpeneNote(activeTerp) || `No quick note for ${activeTerp} yet.`}</p>}
+      </div>}
+
+      {report.expectedEffects.length > 0 && <><h3>Expect</h3><div className="chips">{report.expectedEffects.map(x => <span className="chip active" key={x}>{x}</span>)}</div></>}
+      {report.bestFor.length > 0 && <><h3>Best for</h3><div className="chips">{report.bestFor.map(x => <span className="chip best" key={x}>{x}</span>)}</div></>}
+      {report.watchOuts.length > 0 && <><h3>Watch outs</h3><div className="chips">{report.watchOuts.map(x => <span className="chip warn" key={x}>{x}</span>)}</div></>}
+      <p>{report.dosingGuidance}</p>
+      <div className="small">Confidence: {report.confidence}{report.missingInfo?.length ? ` · Missing: ${report.missingInfo.join(', ')}` : ''}</div>
+    </div>}
+
     <div className="row">
       <button className="secondary ghost" onClick={onDismiss}>✕ Done with it</button>
       <button className="secondary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : '🛒 I bought it — save it'}</button>
     </div>
-    <div className="small">Confidence: {report.confidence}{report.missingInfo?.length ? ` · Missing: ${report.missingInfo.join(', ')}` : ''}</div>
   </div>;
 }
 
