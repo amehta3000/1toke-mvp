@@ -303,6 +303,7 @@ export default function Page() {
   }
 
   return <main className="app">
+    <div className="brandbar">🌿 1Toke</div>
     <section className="hero-line">
       <h1>{heroCopy[tab]}</h1>
     </section>

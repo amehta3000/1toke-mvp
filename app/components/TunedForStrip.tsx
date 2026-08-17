@@ -54,8 +54,8 @@ export default function TunedForStrip({ sessionPrefs, setSessionPrefs, savedPref
       <span className="tuned-label">Tuned for</span>
       <span className="tuned-summary-chips">
         {shownWants.length
-          ? shownWants.map(l => <span key={l} className="chip mini active">{l}</span>)
-          : <span className="chip mini">Tap to set a vibe</span>}
+          ? shownWants.map(l => <span key={l} className="chip tuned-chip mini active">{l}</span>)
+          : <span className="chip tuned-chip mini">Tap to set a vibe</span>}
       </span>
       {moreCount > 0 && <span className="tuned-more">+{moreCount} more</span>}
       <span className="car">{open ? '▴' : '▾'}</span>

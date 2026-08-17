@@ -4,10 +4,10 @@ import { useState } from 'react';
 import { StrainReport } from '@/lib/types';
 import { terpeneNote } from '@/lib/terpenes';
 
-const decisionMeta: Record<StrainReport['buyDecision'], { phrase: string; emoji: string; colorVar: string; pulse: boolean }> = {
-  Buy: { phrase: 'Solid pick', emoji: '✅', colorVar: 'var(--accent)', pulse: true },
-  Maybe: { phrase: 'Could go either way', emoji: '🤔', colorVar: 'var(--warn)', pulse: false },
-  Skip: { phrase: 'Skip it', emoji: '🚫', colorVar: 'var(--bad)', pulse: false }
+const decisionMeta: Record<StrainReport['buyDecision'], { colorVar: string; pulse: boolean }> = {
+  Buy: { colorVar: 'var(--accent)', pulse: true },
+  Maybe: { colorVar: 'var(--warn)', pulse: false },
+  Skip: { colorVar: 'var(--bad)', pulse: false }
 };
 
 function TypeBadge({ strainType }: { strainType?: string }) {
@@ -36,7 +36,7 @@ export function ReportCard({ report, onSave, saving, onDismiss }: { report: Stra
       {report.strainName && report.strainName !== 'Unknown strain' && report.strainName !== 'Unknown' &&
         <p className="small scanned-name">{report.strainName}</p>}
       <div className="score" style={{ '--score': report.matchScore, '--ring': meta.colorVar } as any}><span>{report.matchScore}</span></div>
-      <div className="verdict-word" style={{ color: meta.colorVar }}>{meta.emoji} {report.buyDecision}</div>
+      <div className="verdict-word" style={{ color: meta.colorVar }}>{report.buyDecision}</div>
       <p className="verdict-quicktake"><b>{report.quickTake}</b></p>
     </div>
 
