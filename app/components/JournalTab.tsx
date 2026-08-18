@@ -242,10 +242,9 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
 
   if (editing !== null) {
     return <div className="card stack">
-      <div className="kicker">{isEdit ? 'Fix it up' : '10 seconds, tops'}</div>
       <h2>{isEdit ? 'Edit the session' : 'Log the session'}</h2>
 
-      <h3>What did you have?</h3>
+      <div className="micro-label">What</div>
       {isEdit
         ? <input className="input" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Strain or product name" />
         : <>
@@ -259,23 +258,19 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
           {pickedReportId === 'other' && <input className="input" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Strain or product name" />}
         </>}
 
-      <h3>How did it feel?</h3>
+      <div className="micro-label">Felt like</div>
       <div className="chips">{feelingOptions.map(f =>
         <button key={f} className={`chip ${feelings.includes(f) ? 'active' : ''}`} onClick={() => setFeelings(cur => cur.includes(f) ? cur.filter(x => x !== f) : [...cur, f])}>{f}</button>
       )}</div>
 
-      <h3>Rate it</h3>
       <Stars value={rating} onChange={setRating} />
 
-      <h3>Buy it again?</h3>
       <div className="chips">
-        <button className={`chip ${wouldBuyAgain === true ? 'active' : ''}`} onClick={() => setWouldBuyAgain(w => w === true ? null : true)}>👍 Yes</button>
+        <button className={`chip ${wouldBuyAgain === true ? 'active' : ''}`} onClick={() => setWouldBuyAgain(w => w === true ? null : true)}>👍 Again</button>
         <button className={`chip ${wouldBuyAgain === false ? 'active' : ''}`} onClick={() => setWouldBuyAgain(w => w === false ? null : false)}>👎 Never</button>
       </div>
 
-      <label>Notes (optional)
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Comedown? How long did it last? Anything surprising?" />
-      </label>
+      <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Comedown? How long did it last? Anything surprising?" />
 
       <div>
         <button className={`chip loc-chip ${locationOn ? 'active' : ''}`} onClick={toggleLocation}>📍 Tag this location</button>
