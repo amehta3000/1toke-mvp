@@ -62,38 +62,49 @@ export function Stars({ value, onChange }: { value: number; onChange?: (v: numbe
   </div>;
 }
 
-function SessionCard({ session, onEdit }: { session: any; onEdit: () => void }) {
+function shortDate(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (d.toDateString() === new Date().toDateString()) return 'Today';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function starGlyphs(rating: number | null): string {
+  const filled = Math.max(0, Math.min(5, rating || 0));
+  return '★★★★★'.slice(0, filled) + '☆☆☆☆☆'.slice(0, 5 - filled);
+}
+
+// One scannable line per session — date, name, stars, buy-again. Feelings,
+// notes, location and the linked product report all sit behind the tap, so a
+// long journal stays readable instead of becoming a wall of cards.
+function SessionRow({ session, onEdit }: { session: any; onEdit: () => void }) {
   const [open, setOpen] = useState(false);
   const rep = session.reports?.report || null;
-  const when = session.created_at ? new Date(session.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
   const whenFull = session.created_at
     ? new Date(session.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     : '';
   const feelings: string[] = Array.isArray(session.feelings) ? session.feelings : [];
   const hasLocation = typeof session.location_lat === 'number';
 
-  return <div className="session-card" onClick={() => setOpen(o => !o)}>
-    <div className="pillline">
-      <div>
-        <b>{session.strain_name || 'Unnamed session'}</b>
-        <div className="small">{when}{session.would_buy_again === true ? ' · 👍 would buy again' : session.would_buy_again === false ? ' · 👎 never again' : ''}</div>
-      </div>
-      {session.rating ? <Stars value={session.rating} /> : null}
-    </div>
-    {feelings.length > 0 && <div className="chips">{feelings.map(f => <span key={f} className="chip mini">{f}</span>)}</div>}
-    {session.notes && <p className="notes">“{session.notes}”</p>}
-    <div className="pillline">
-      <span className="small expand-hint">{open ? '▾ details' : '▸ details'}</span>
-      <button className="editlink small" onClick={e => { e.stopPropagation(); onEdit(); }}>✎ Edit</button>
-    </div>
-    {open && <div className="stack" onClick={e => e.stopPropagation()}>
-      <div className="metric"><b>Logged</b><span>{whenFull}</span></div>
-      {hasLocation && <div className="metric"><b>Location</b><span>📍 Tagged</span></div>}
+  return <div className="session-item">
+    <button className="session-row" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+      <span className="session-date">{shortDate(session.created_at)}</span>
+      <span className="session-strain">{session.strain_name || 'Unnamed session'}</span>
+      <span className="session-stars">{starGlyphs(session.rating)}</span>
+      <span className="session-again">{session.would_buy_again === true ? '👍' : session.would_buy_again === false ? '👎' : '—'}</span>
+      <span className="session-chevron">›</span>
+    </button>
+
+    {open && <div className="session-detail stack">
+      <div className="small">{whenFull}{hasLocation ? ' · 📍 location tagged' : ''}</div>
+      {feelings.length > 0 && <div className="chips">{feelings.map(f => <span key={f} className="chip mini">{f}</span>)}</div>}
+      {session.notes && <p className="notes">“{session.notes}”</p>}
       {rep && <>
         <div className="metric"><b>Decision was</b><span>{rep.buyDecision || '—'} · score {rep.matchScore ?? '—'}</span></div>
         <div className="metric"><b>Cannabinoids</b><span>{rep.cannabinoids || 'Unknown'}</span></div>
         <div className="metric"><b>Terpenes</b><span>{Array.isArray(rep.terpenes) && rep.terpenes.length ? rep.terpenes.join(', ') : 'Unknown'}</span></div>
       </>}
+      <button className="editlink small" onClick={onEdit}>✎ Edit</button>
     </div>}
   </div>;
 }
@@ -290,22 +301,24 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
   return <div className="stack">
     <div className="card stack">
       <div className="pillline">
-        <div><div className="kicker">Journal</div><h2>Your sessions</h2></div>
+        <div className="micro-label">Your sessions</div>
         <button className="primary slim" onClick={openNew}>＋ Log a session</button>
       </div>
       {needsMigration && <p className="small banner">⚠️ One-time setup: run the updated <b>supabase-schema.sql</b> in your Supabase SQL editor to store sessions.</p>}
       {showAccountNudge && <button className="banner nudge small" onClick={onAccountNudge}>🔐 This journal lives only on this device. Tap to add your email so it follows you anywhere.</button>}
       {sessions.length === 0 && !needsMigration && <p>Nothing logged yet. Flower, vape, gummy, whatever — after your next session, come back and tap it in. This is literally how I get smarter about you.</p>}
-      {sessions.map(s => <SessionCard key={s.id} session={s} onEdit={() => openEdit(s)} />)}
+      {sessions.length > 0 && <div className="session-list">
+        {sessions.map(s => <SessionRow key={s.id} session={s} onEdit={() => openEdit(s)} />)}
+      </div>}
     </div>
 
     {patterns.rated < 3
       ? <div className="card stack">
-          <div className="kicker">Patterns</div>
+          <div className="micro-label">Your patterns</div>
           <p className="small">Log {3 - patterns.rated} more rated session{3 - patterns.rated === 1 ? '' : 's'} and this unlocks — repeat-worthy strains, terpenes that work on you, what to skip.</p>
         </div>
       : (patterns.repeatWorthy.length > 0 || patterns.lovedFeelings.length > 0 || patterns.lovedTerpenes.length > 0 || patterns.notForYou.length > 0) && <div className="card stack">
-          <div className="kicker">Patterns</div>
+          <div className="micro-label">Your patterns</div>
 
           {patterns.repeatWorthy.length > 0 && <div className="stack">
             <h3>🔁 Repeat-worthy</h3>
