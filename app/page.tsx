@@ -10,10 +10,10 @@ import { trackEvent } from '@/lib/analytics';
 import Onboarding from './components/Onboarding';
 import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
-import DiscoverTab from './components/DiscoverTab';
 import ProfileTab from './components/ProfileTab';
 import InstallPrompt from './components/InstallPrompt';
 import AccountCard from './components/AccountCard';
+import TunedForStrip from './components/TunedForStrip';
 
 const storageKey = '1toke:prefs';
 const onboardedKey = '1toke:onboarded';
@@ -32,32 +32,26 @@ const loadingLines = [
 const navItems = [
   { id: 'scan', label: 'Scan', icon: '🔍' },
   { id: 'journal', label: 'Journal', icon: '📓' },
-  { id: 'discover', label: 'Discover', icon: '🧭' },
   { id: 'profile', label: 'Profile', icon: '🎛' }
 ] as const;
 
+// One line, not three: the old kicker + h1 + subhead block repeated the same
+// orientation on every tab visit. Each tab now opens with a single sentence.
 const heroCopy = {
-  scan: {
-    title: 'Scan before you buy.',
-    sub: 'Snap a label or ask about a strain. Get a personal match score and a straight Buy / Maybe / Skip.'
-  },
-  journal: {
-    title: 'Log it while it’s fresh.',
-    sub: 'Ten seconds of taps per session — this is what teaches 1Toke what actually works on you.'
-  },
-  discover: {
-    title: 'Know your patterns.',
-    sub: 'What your logged sessions say about the strains, terpenes, and feelings that suit you.'
-  },
-  profile: {
-    title: 'Make it yours.',
-    sub: 'Your vibe, your limits. Every verdict is scored against what you set here.'
-  }
+  scan: 'What vibe are you going for?',
+  journal: 'Log it. Future you says thanks.',
+  profile: 'This is what I always start from.'
 } as const;
 
 export default function Page() {
-  const [tab, setTab] = useState<'scan'|'journal'|'discover'|'profile'>('scan');
+  const [tab, setTab] = useState<'scan'|'journal'|'profile'>('scan');
   const [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
+  // What THIS scan is scored against. Starts as a copy of the saved profile
+  // and stays in sync with it, but tapping a chip in the Scan tuned-for strip
+  // only touches this — the saved profile doesn't move until Profile itself
+  // is edited.
+  const [sessionPrefs, setSessionPrefs] = useState<Preferences>(defaultPreferences);
+  const [armed, setArmed] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [question, setQuestion] = useState('');
   const [image, setImage] = useState<File | null>(null);
@@ -171,6 +165,18 @@ export default function Page() {
     initIdentity(id);
   }, []);
   useEffect(() => { safeSet(storageKey, JSON.stringify(prefs)); }, [prefs]);
+  useEffect(() => { setSessionPrefs(prefs); }, [prefs]);
+
+  // PWA shortcut (manifest.ts) lands here with ?action=scan — can't force the
+  // OS camera picker open without a user gesture, so instead the Snap tile
+  // pulses briefly to prompt the one tap that opens it.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('action') !== 'scan') return;
+    setArmed(true);
+    const timer = setTimeout(() => setArmed(false), 1600);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!busy) { setLoadingLine(0); return; }
@@ -206,7 +212,7 @@ export default function Page() {
     try {
       const form = new FormData();
       form.set('question', question);
-      form.set('preferences', JSON.stringify(prefs));
+      form.set('preferences', JSON.stringify(sessionPrefs));
       form.set('deviceId', deviceId);
       if (image) form.set('image', image);
 
@@ -297,16 +303,17 @@ export default function Page() {
   }
 
   return <main className="app">
-    <section className="hero">
-      <div className="kicker">1Toke</div>
-      <h1>{heroCopy[tab].title}</h1>
-      <p>{heroCopy[tab].sub}</p>
+    <div className="brandbar">🌿 1Toke</div>
+    <section className="hero-line">
+      <h1>{heroCopy[tab]}</h1>
     </section>
 
     {tab === 'scan' && <div className="stack">
       <div className="card stack">
+        <TunedForStrip sessionPrefs={sessionPrefs} setSessionPrefs={setSessionPrefs} savedPrefs={prefs} />
+
         <div className="row">
-          <label className="filebtn">📷 Snap the label
+          <label className={`filebtn ${armed ? 'armed' : ''}`}>📷 Snap the label
             <input type="file" accept="image/*" capture="environment" onChange={e => { onImage(e.target.files?.[0] || null); e.target.value = ''; }} />
           </label>
           <label className="filebtn">🖼 From gallery
@@ -331,9 +338,6 @@ export default function Page() {
             <p className="small">{analyzeError.details}</p>
           </details>}
         </div>}
-        <button className="tuning small" onClick={() => setTab('profile')}>
-          🎛 Tuned for: {activeWants.join(' · ') || 'nothing yet — tap to set your vibe'}
-        </button>
       </div>
 
       {report && (report.confidence === 'low'
@@ -353,8 +357,6 @@ export default function Page() {
       showAccountNudge={identity.configured && identity.isAnonymous && sessions.length >= 2}
       onAccountNudge={() => setTab('profile')}
     />}
-
-    {tab === 'discover' && <DiscoverTab sessions={sessions} />}
 
     {tab === 'profile' && <div className="stack">
       <ProfileTab prefs={prefs} setPrefs={setPrefs} onReplaySetup={() => setShowOnboarding(true)} />

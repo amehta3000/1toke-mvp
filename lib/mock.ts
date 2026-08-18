@@ -31,7 +31,7 @@ export function mockAnalyze(question: string, prefs: Preferences): StrainReport 
     strainName: name.slice(0, 42),
     brand: 'Mock mode (no API key)',
     brandNotes: 'Demo brand intel: with a real API key this line covers reputation, how established they are, and anything notable.',
-    strainType: 'Hybrid — sativa-leaning',
+    strainType: prefs.citrus ? 'Indica' : 'Hybrid — sativa-leaning',
     productType: 'Flower / pre-roll',
     cannabinoids: 'Unknown until label is scanned clearly',
     terpenes: prefs.citrus ? ['limonene', 'pinene', 'caryophyllene'] : ['caryophyllene', 'linalool'],
@@ -48,6 +48,11 @@ export function mockAnalyze(question: string, prefs: Preferences): StrainReport 
     bestFor: ['daytime walk', 'music making', 'social hang'],
     dosingGuidance: 'Try 1–2 small tokes, wait 10–15 minutes, then decide. Do not judge it from THC % alone.',
     confidence: 'medium',
-    missingInfo: ['clear THC/CBD values', 'terpene panel', 'package date']
+    missingInfo: ['clear THC/CBD values', 'terpene panel', 'package date'],
+    // Demonstrates the label-vs-chemistry mismatch in mock mode: a citrus lean
+    // toggled on shows what a mislabeled-Indica product looks like end to end.
+    labelCheck: prefs.citrus
+      ? 'Labeled Indica — but limonene + pinene-forward, which reads closer to head/uplifting than the label suggests. Scored against the terpenes, not the sticker.'
+      : undefined
   };
 }

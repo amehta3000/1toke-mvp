@@ -145,17 +145,25 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; font-weig
 .metric b { color: var(--text); }
 .metric span { color: var(--muted); text-align: right; }
 
-/* Journal timeline */
-.session-card {
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 12px 14px;
-  background: rgba(0,0,0,.15);
+/* Journal timeline — one tight line per session, everything else behind the
+   tap. A wall of full cards stopped being scannable past a handful of logs. */
+.session-list { display: flex; flex-direction: column; }
+.session-item + .session-item { border-top: 1px solid var(--line); }
+.session-row {
   display: grid;
-  gap: 8px;
+  grid-template-columns: 52px minmax(0,1fr) auto auto 10px;
+  align-items: center; gap: 10px; width: 100%;
+  border: 0; background: none; color: inherit; text-align: left;
+  padding: 11px 2px;
 }
-.session-card .notes { font-style: italic; }
-.expand-hint { color: var(--accent); font-weight: 700; }
+.session-date { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.session-strain { font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-stars { font-size: 12px; color: var(--warn); letter-spacing: 1px; white-space: nowrap; }
+.session-again { font-size: 13px; }
+.session-chevron { color: var(--muted); font-size: 15px; justify-self: end; transition: transform .2s ease; }
+.session-row[aria-expanded="true"] .session-chevron { transform: rotate(90deg); color: var(--accent2); }
+.session-detail { padding: 2px 2px 14px 62px; }
+.notes { font-style: italic; }
 .stars { display: inline-flex; gap: 2px; }
 .stars .star { color: rgba(255,255,255,.18); font-size: 18px; background: none; border: 0; padding: 0; line-height: 1; }
 .stars.tappable .star { font-size: 34px; padding: 2px 4px; }
@@ -197,7 +205,7 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; font-weig
 
 .nav {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; width: min(500px, calc(100% - 28px));
-  display: grid; grid-template-columns: repeat(4,1fr); gap: 8px;
+  display: grid; grid-template-columns: repeat(3,1fr); gap: 8px;
   background: rgba(15,17,21,.8); backdrop-filter: blur(16px); border: 1px solid var(--line); border-radius: 24px; padding: 8px;
   z-index: 10;
 }
@@ -208,6 +216,90 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; font-weig
 .nav button.active { background: var(--panel2); color: var(--text); }
 .nav-icon { font-size: 17px; }
 .small { font-size: 12px; color: var(--muted); }
+/* Quiet section grouping inside forms — unlike .kicker (bold, lime, meant to
+   stand out), this just labels a cluster of controls without shouting. */
+.micro-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 700; }
 .pillline { display: flex; justify-content: space-between; gap: 10px; align-items:center; }
 
 input[type="range"] { accent-color: var(--accent); width: 100%; }
+
+/* Persistent brand mark — replaces the old per-tab "1Toke" kicker with a
+   single mark shown once, above the one-line hero instead of repeated
+   inside it. */
+.brandbar {
+  font-weight: 800; font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent); padding: 2px 2px 0;
+}
+
+/* One-line hero replacing the old kicker + h1 + subhead block on every
+   in-app tab — orientation now happens in-context instead of up front. */
+.hero-line { padding: 6px 2px 14px; }
+.hero-line h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; color: var(--text); }
+
+/* Tuned-for strip (Scan tab): per-scan preference tweak, collapsed by default */
+.tuned-strip { display: flex; flex-direction: column; gap: 10px; }
+.tuned-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  border: 0; background: none; color: var(--muted); text-align: left; padding: 0; width: 100%;
+}
+.tuned-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.tuned-summary-chips { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.tuned-more { font-size: 12px; font-weight: 700; color: var(--accent2); }
+.tuned-row .car { font-size: 11px; color: var(--accent2); margin-left: auto; }
+.tuned-panel { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+/* Soft tag treatment, not a solid-fill CTA — these sit right above "Get the
+   verdict" and shouldn't compete with it for visual weight. */
+.tuned-chip.active { background: rgba(215,255,85,.16); border-color: rgba(215,255,85,.45); color: var(--accent); }
+.tuned-chip.avoid.active { background: rgba(255,122,144,.16); border-color: rgba(255,122,144,.4); color: var(--bad); }
+
+/* Head/body lean dial — scores against the terpene-derived lean, not the
+   printed Indica/Sativa label */
+.lean-row { display: flex; flex-direction: column; gap: 6px; }
+.lean-labels { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; }
+.lean-labels .readout { color: var(--accent2); }
+
+/* Label vs. actual-chemistry mismatch callout */
+.label-check {
+  display: flex; gap: 10px; align-items: flex-start;
+  background: rgba(110,231,183,.08); border: 1px solid rgba(110,231,183,.3);
+  border-radius: 14px; padding: 11px 12px;
+}
+.label-check .lc-icon { font-size: 15px; flex-shrink: 0; line-height: 1.3; }
+.label-check p { margin: 0; color: var(--text); }
+
+/* Tap-a-terpene-for-a-one-liner note */
+.terp-note {
+  color: var(--muted); background: rgba(0,0,0,.15); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px; margin: 0;
+}
+
+/* Report verdict: glanceable first (word + score + one line), everything
+   else lives behind "tap for details" */
+.verdict-core { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 4px 0 2px; position: relative; }
+.scanned-name { margin: 0; }
+.verdict-word { font-size: clamp(2.2rem, 11vw, 3rem); font-weight: 900; letter-spacing: -0.03em; line-height: 1; margin-top: 2px; }
+.verdict-quicktake { max-width: 32ch; margin: 2px 0 0; color: var(--text); }
+@media (prefers-reduced-motion: no-preference) {
+  .verdict-core.pulse::before {
+    content: ""; position: absolute; inset: -24px 15%;
+    background: radial-gradient(closest-side, rgba(215,255,85,.18), transparent 70%);
+    z-index: -1; animation: pulseGlow 2.2s ease-in-out infinite;
+  }
+}
+@keyframes pulseGlow { 0%, 100% { opacity: .5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
+
+.expand-toggle {
+  border: 0; background: none; color: var(--accent2); font-weight: 800; font-size: 13px;
+  padding: 6px 0; width: 100%; text-align: center;
+}
+
+/* PWA shortcut: brief pulse on the Snap tile when landing via ?action=scan */
+@media (prefers-reduced-motion: no-preference) {
+  .filebtn.armed { animation: armedPulse 1.4s ease; }
+  @keyframes armedPulse {
+    0% { border-color: var(--accent); background: rgba(215,255,85,.12); }
+    100% { border-color: var(--line); background: var(--panel2); }
+  }
+}
+
+.loc-chip { margin-bottom: 4px; }

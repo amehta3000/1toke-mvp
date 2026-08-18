@@ -1,10 +1,56 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { feelingOptions } from '@/lib/defaults';
 import { SavedReport } from '@/lib/types';
 import { authFetch } from '@/lib/supabaseBrowser';
 import { trackEvent } from '@/lib/analytics';
+
+// Folded in from the old standalone Discover tab: a permanent 4th nav item
+// was dead weight for anyone under 3 rated sessions, so this now lives as a
+// section of Journal instead — the payoff for logging, right where the data
+// that produces it already lives.
+function countTop(items: string[], limit: number): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const raw of items) {
+    const key = raw.trim().toLowerCase();
+    if (!key) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit);
+}
+
+function usePatterns(sessions: any[]) {
+  return useMemo(() => {
+    const rated = sessions.filter(s => typeof s.rating === 'number');
+    const loved = rated.filter(s => s.rating >= 4);
+    const disliked = rated.filter(s => s.rating <= 2);
+
+    const seen = new Set<string>();
+    const repeatWorthy = loved
+      .map(s => ({ name: s.strain_name as string, rating: s.rating as number }))
+      .filter(s => {
+        const key = s.name.toLowerCase();
+        if (!s.name || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 5);
+
+    const notForYou = [...new Set(disliked.map(s => (s.strain_name as string) || '').filter(Boolean))].slice(0, 5);
+    const lovedFeelings = countTop(loved.flatMap(s => Array.isArray(s.feelings) ? s.feelings : []), 5);
+    const lovedTerpenes = countTop(
+      loved.flatMap(s => { const t = s.reports?.report?.terpenes; return Array.isArray(t) ? t.map(String) : []; }),
+      5
+    );
+    const dislikedTerpenes = countTop(
+      disliked.flatMap(s => { const t = s.reports?.report?.terpenes; return Array.isArray(t) ? t.map(String) : []; }),
+      3
+    );
+
+    return { rated: rated.length, repeatWorthy, notForYou, lovedFeelings, lovedTerpenes, dislikedTerpenes };
+  }, [sessions]);
+}
 
 export function Stars({ value, onChange }: { value: number; onChange?: (v: number) => void }) {
   return <div className={`stars ${onChange ? 'tappable' : ''}`}>
@@ -16,30 +62,49 @@ export function Stars({ value, onChange }: { value: number; onChange?: (v: numbe
   </div>;
 }
 
-function SessionCard({ session, onEdit }: { session: any; onEdit: () => void }) {
+function shortDate(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (d.toDateString() === new Date().toDateString()) return 'Today';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function starGlyphs(rating: number | null): string {
+  const filled = Math.max(0, Math.min(5, rating || 0));
+  return '★★★★★'.slice(0, filled) + '☆☆☆☆☆'.slice(0, 5 - filled);
+}
+
+// One scannable line per session — date, name, stars, buy-again. Feelings,
+// notes, location and the linked product report all sit behind the tap, so a
+// long journal stays readable instead of becoming a wall of cards.
+function SessionRow({ session, onEdit }: { session: any; onEdit: () => void }) {
   const [open, setOpen] = useState(false);
   const rep = session.reports?.report || null;
-  const when = session.created_at ? new Date(session.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+  const whenFull = session.created_at
+    ? new Date(session.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
   const feelings: string[] = Array.isArray(session.feelings) ? session.feelings : [];
+  const hasLocation = typeof session.location_lat === 'number';
 
-  return <div className="session-card" onClick={() => rep && setOpen(o => !o)}>
-    <div className="pillline">
-      <div>
-        <b>{session.strain_name || 'Unnamed session'}</b>
-        <div className="small">{when}{session.would_buy_again === true ? ' · 👍 would buy again' : session.would_buy_again === false ? ' · 👎 never again' : ''}</div>
-      </div>
-      {session.rating ? <Stars value={session.rating} /> : null}
-    </div>
-    {feelings.length > 0 && <div className="chips">{feelings.map(f => <span key={f} className="chip mini">{f}</span>)}</div>}
-    {session.notes && <p className="notes">“{session.notes}”</p>}
-    <div className="pillline">
-      <span className="small expand-hint">{rep ? (open ? '▾ product details' : '▸ product details') : ''}</span>
-      <button className="editlink small" onClick={e => { e.stopPropagation(); onEdit(); }}>✎ Edit</button>
-    </div>
-    {open && rep && <div className="stack" onClick={e => e.stopPropagation()}>
-      <div className="metric"><b>Decision was</b><span>{rep.buyDecision || '—'} · score {rep.matchScore ?? '—'}</span></div>
-      <div className="metric"><b>Cannabinoids</b><span>{rep.cannabinoids || 'Unknown'}</span></div>
-      <div className="metric"><b>Terpenes</b><span>{Array.isArray(rep.terpenes) && rep.terpenes.length ? rep.terpenes.join(', ') : 'Unknown'}</span></div>
+  return <div className="session-item">
+    <button className="session-row" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+      <span className="session-date">{shortDate(session.created_at)}</span>
+      <span className="session-strain">{session.strain_name || 'Unnamed session'}</span>
+      <span className="session-stars">{starGlyphs(session.rating)}</span>
+      <span className="session-again">{session.would_buy_again === true ? '👍' : session.would_buy_again === false ? '👎' : '—'}</span>
+      <span className="session-chevron">›</span>
+    </button>
+
+    {open && <div className="session-detail stack">
+      <div className="small">{whenFull}{hasLocation ? ' · 📍 location tagged' : ''}</div>
+      {feelings.length > 0 && <div className="chips">{feelings.map(f => <span key={f} className="chip mini">{f}</span>)}</div>}
+      {session.notes && <p className="notes">“{session.notes}”</p>}
+      {rep && <>
+        <div className="metric"><b>Decision was</b><span>{rep.buyDecision || '—'} · score {rep.matchScore ?? '—'}</span></div>
+        <div className="metric"><b>Cannabinoids</b><span>{rep.cannabinoids || 'Unknown'}</span></div>
+        <div className="metric"><b>Terpenes</b><span>{Array.isArray(rep.terpenes) && rep.terpenes.length ? rep.terpenes.join(', ') : 'Unknown'}</span></div>
+      </>}
+      <button className="editlink small" onClick={onEdit}>✎ Edit</button>
     </div>}
   </div>;
 }
@@ -62,11 +127,14 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
   const [rating, setRating] = useState(0);
   const [wouldBuyAgain, setWouldBuyAgain] = useState<boolean | null>(null);
   const [notes, setNotes] = useState('');
+  const [locationOn, setLocationOn] = useState(false);
+  const [locationCoords, setLocationCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const recentReports = savedReports.slice(0, 8);
   const isEdit = editing !== null && editing !== 'new';
+  const patterns = usePatterns(sessions);
 
   function openNew() {
     setEditing('new');
@@ -76,6 +144,8 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
     setRating(0);
     setWouldBuyAgain(null);
     setNotes('');
+    setLocationOn(false);
+    setLocationCoords(null);
     setConfirmDelete(false);
   }
 
@@ -87,11 +157,30 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
     setRating(session.rating || 0);
     setWouldBuyAgain(typeof session.would_buy_again === 'boolean' ? session.would_buy_again : null);
     setNotes(session.notes || '');
+    const hasLocation = typeof session.location_lat === 'number' && typeof session.location_lng === 'number';
+    setLocationOn(hasLocation);
+    setLocationCoords(hasLocation ? { lat: session.location_lat, lng: session.location_lng } : null);
     setConfirmDelete(false);
   }
 
   function close() {
     setEditing(null);
+  }
+
+  // Off by default, opt-in only. Nothing is captured until this is tapped —
+  // and it stays off unless the browser actually hands back a position.
+  function toggleLocation() {
+    if (locationOn) { setLocationOn(false); return; }
+    if (locationCoords) { setLocationOn(true); return; }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      showToast('Location isn’t available on this device.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => { setLocationCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setLocationOn(true); },
+      () => showToast('Could not get your location — check permissions.'),
+      { timeout: 8000 }
+    );
   }
 
   async function save() {
@@ -104,7 +193,11 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
 
     setSaving(true);
     try {
-      const payload: any = { deviceId, strainName, rating, feelings, wouldBuyAgain, notes };
+      const payload: any = {
+        deviceId, strainName, rating, feelings, wouldBuyAgain, notes,
+        locationLat: locationOn && locationCoords ? locationCoords.lat : null,
+        locationLng: locationOn && locationCoords ? locationCoords.lng : null
+      };
       if (isEdit) payload.id = editing.id;
       else payload.reportId = pickedReportId === 'other' ? null : pickedReportId;
 
@@ -160,10 +253,9 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
 
   if (editing !== null) {
     return <div className="card stack">
-      <div className="kicker">{isEdit ? 'Fix it up' : '10 seconds, tops'}</div>
       <h2>{isEdit ? 'Edit the session' : 'Log the session'}</h2>
 
-      <h3>What did you have?</h3>
+      <div className="micro-label">What</div>
       {isEdit
         ? <input className="input" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Strain or product name" />
         : <>
@@ -177,23 +269,24 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
           {pickedReportId === 'other' && <input className="input" value={customName} onChange={e => setCustomName(e.target.value)} placeholder="Strain or product name" />}
         </>}
 
-      <h3>How did it feel?</h3>
+      <div className="micro-label">Felt like</div>
       <div className="chips">{feelingOptions.map(f =>
         <button key={f} className={`chip ${feelings.includes(f) ? 'active' : ''}`} onClick={() => setFeelings(cur => cur.includes(f) ? cur.filter(x => x !== f) : [...cur, f])}>{f}</button>
       )}</div>
 
-      <h3>Rate it</h3>
       <Stars value={rating} onChange={setRating} />
 
-      <h3>Buy it again?</h3>
       <div className="chips">
-        <button className={`chip ${wouldBuyAgain === true ? 'active' : ''}`} onClick={() => setWouldBuyAgain(w => w === true ? null : true)}>👍 Yes</button>
+        <button className={`chip ${wouldBuyAgain === true ? 'active' : ''}`} onClick={() => setWouldBuyAgain(w => w === true ? null : true)}>👍 Again</button>
         <button className={`chip ${wouldBuyAgain === false ? 'active' : ''}`} onClick={() => setWouldBuyAgain(w => w === false ? null : false)}>👎 Never</button>
       </div>
 
-      <label>Notes (optional)
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Comedown? How long did it last? Anything surprising?" />
-      </label>
+      <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Comedown? How long did it last? Anything surprising?" />
+
+      <div>
+        <button className={`chip loc-chip ${locationOn ? 'active' : ''}`} onClick={toggleLocation}>📍 Tag this location</button>
+        <p className="small">Off by default — nothing’s tracked unless you tap this.</p>
+      </div>
 
       <div className="row">
         <button className="secondary" onClick={close}>Cancel</button>
@@ -208,14 +301,46 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
   return <div className="stack">
     <div className="card stack">
       <div className="pillline">
-        <div><div className="kicker">Journal</div><h2>Your sessions</h2></div>
+        <div className="micro-label">Your sessions</div>
         <button className="primary slim" onClick={openNew}>＋ Log a session</button>
       </div>
       {needsMigration && <p className="small banner">⚠️ One-time setup: run the updated <b>supabase-schema.sql</b> in your Supabase SQL editor to store sessions.</p>}
       {showAccountNudge && <button className="banner nudge small" onClick={onAccountNudge}>🔐 This journal lives only on this device. Tap to add your email so it follows you anywhere.</button>}
       {sessions.length === 0 && !needsMigration && <p>Nothing logged yet. Flower, vape, gummy, whatever — after your next session, come back and tap it in. This is literally how I get smarter about you.</p>}
-      {sessions.map(s => <SessionCard key={s.id} session={s} onEdit={() => openEdit(s)} />)}
+      {sessions.length > 0 && <div className="session-list">
+        {sessions.map(s => <SessionRow key={s.id} session={s} onEdit={() => openEdit(s)} />)}
+      </div>}
     </div>
+
+    {patterns.rated < 3
+      ? <div className="card stack">
+          <div className="micro-label">Your patterns</div>
+          <p className="small">Log {3 - patterns.rated} more rated session{3 - patterns.rated === 1 ? '' : 's'} and this unlocks — repeat-worthy strains, terpenes that work on you, what to skip.</p>
+        </div>
+      : (patterns.repeatWorthy.length > 0 || patterns.lovedFeelings.length > 0 || patterns.lovedTerpenes.length > 0 || patterns.notForYou.length > 0) && <div className="card stack">
+          <div className="micro-label">Your patterns</div>
+
+          {patterns.repeatWorthy.length > 0 && <div className="stack">
+            <h3>🔁 Repeat-worthy</h3>
+            {patterns.repeatWorthy.map(s => <div className="metric" key={s.name}><b>{s.name}</b><span>{'★'.repeat(s.rating)}</span></div>)}
+          </div>}
+
+          {patterns.lovedFeelings.length > 0 && <div className="stack">
+            <h3>💫 Feelings you chase</h3>
+            <div className="chips">{patterns.lovedFeelings.map(([f, n]) => <span key={f} className="chip active">{f}{n > 1 ? ` ×${n}` : ''}</span>)}</div>
+          </div>}
+
+          {patterns.lovedTerpenes.length > 0 && <div className="stack">
+            <h3>🧪 Terpene wins</h3>
+            <div className="chips">{patterns.lovedTerpenes.map(([t, n]) => <span key={t} className="chip best">{t}{n > 1 ? ` ×${n}` : ''}</span>)}</div>
+          </div>}
+
+          {(patterns.notForYou.length > 0 || patterns.dislikedTerpenes.length > 0) && <div className="stack">
+            <h3>🙅 Not your thing</h3>
+            {patterns.notForYou.map(name => <div className="metric" key={name}><b>{name}</b><span>rated 2★ or less</span></div>)}
+            {patterns.dislikedTerpenes.length > 0 && <div className="chips">{patterns.dislikedTerpenes.map(([t]) => <span key={t} className="chip warn">{t}</span>)}</div>}
+          </div>}
+        </div>}
 
     {savedReports.length > 0 && <div className="card stack">
       <h3>Products you&apos;ve saved <span className="small">({savedReports.length})</span></h3>

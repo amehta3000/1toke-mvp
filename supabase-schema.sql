@@ -32,8 +32,16 @@ create table if not exists sessions (
   rating int null check (rating between 1 and 5),
   feelings jsonb null,
   notes text null,
-  would_buy_again boolean null
+  would_buy_again boolean null,
+  -- Opt-in only: null unless the person explicitly tagged a location when
+  -- logging. Never populated automatically.
+  location_lat double precision null,
+  location_lng double precision null
 );
+
+-- Additive for databases that already ran this file before location tagging existed.
+alter table sessions add column if not exists location_lat double precision null;
+alter table sessions add column if not exists location_lng double precision null;
 
 create index if not exists sessions_user_created_idx on sessions (user_id, created_at desc);
 create index if not exists reports_user_created_idx on reports (user_id, created_at desc);
