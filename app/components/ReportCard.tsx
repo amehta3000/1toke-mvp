@@ -23,30 +23,44 @@ function TypeBadge({ strainType }: { strainType?: string }) {
   return <span className={`typebadge ${kind}`}>{icon} {strainType}</span>;
 }
 
-// Deliberately not "Buy / Maybe / Skip" — that's the model's vocabulary, and
-// reusing it two inches below its own verdict made the middle button read as
-// "I agree" rather than "here's my own call". These are the person's words.
+// Two options, not three. A middle "Unsure" button was a dead end — it looks
+// like an answer but records nothing you can act on later, and it collided
+// with the model's own "Maybe" verdict a couple of inches above. Deliberately
+// not Buy/Maybe/Skip either: that's the model's vocabulary, and reusing it
+// made a tap read as "I agree" rather than the person's own call.
 const REACTIONS: { key: Reaction; label: string }[] = [
   { key: 'pass', label: '👎 Pass' },
-  { key: 'maybe', label: '🤔 Unsure' },
   { key: 'good', label: '👍 Want it' }
 ];
 
+// 'maybe' is no longer offered but is kept here so rows already written with
+// it still render their history line correctly.
 const REACTION_PAST: Record<Reaction, string> = {
-  pass: 'you passed on it',
-  maybe: 'you were unsure',
-  good: 'you wanted it'
+  pass: 'passed on it',
+  maybe: 'were unsure',
+  good: 'wanted it'
 };
+
+function scannedAgo(iso?: string | null): string {
+  if (!iso) return '';
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return ' today';
+  if (days === 1) return ' yesterday';
+  if (days < 30) return ` ${days} days ago`;
+  return ` on ${new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+}
 
 // The glance view is the whole point: word + score + one line, nothing else,
 // so a Buy/Maybe/Skip call is readable in a couple of seconds in a store.
 // Everything else — why, brand, terpenes, dosing — is one tap away.
-export function ReportCard({ report, reaction, onReact, reacting, fromCache, onDismiss }: {
+export function ReportCard({ report, reaction, onReact, reacting, fromCache, scannedAt, evidence, onDismiss }: {
   report: StrainReport;
   reaction: Reaction | null;
   onReact: (value: Reaction) => void;
   reacting?: boolean;
   fromCache?: boolean;
+  scannedAt?: string | null;
+  evidence?: string[];
   onDismiss: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -62,11 +76,12 @@ export function ReportCard({ report, reaction, onReact, reacting, fromCache, onD
       <p className="verdict-quicktake"><b>{report.quickTake}</b></p>
     </div>
 
-    {/* Scanned this before, same profile: say so rather than silently
-        replaying an old answer as if it were fresh. */}
-    {fromCache && <p className="small recall">
-      ↩ You scanned this before{reaction ? ` — ${REACTION_PAST[reaction]}` : ''}.
-    </p>}
+    {/* An instant answer should explain itself, or it reads as "it didn't
+        actually think". This says the speed is memory, not a shortcut. */}
+    {fromCache && <div className="recall">
+      <span className="recall-icon">↩</span>
+      <p>You scanned this{scannedAgo(scannedAt)}{reaction ? ` and ${REACTION_PAST[reaction]}` : ''}. Same profile since, so this is your saved read.</p>
+    </div>}
 
     <div className="stack reaction-block">
       <div className="micro-label">Would you try it?</div>
@@ -88,6 +103,11 @@ export function ReportCard({ report, reaction, onReact, reacting, fromCache, onD
     </button>
 
     {expanded && <div className="stack details-body">
+      {/* What the number was actually built from. The work is real; without
+          this it's invisible, and an instant answer looks like a guess. */}
+      {evidence && evidence.length > 0 && <p className="small evidence">
+        🧾 Scored against {evidence.join(' · ')}
+      </p>}
       <TypeBadge strainType={report.strainType} />
       {report.whyThisScore && <p className="small why">📈 {report.whyThisScore}</p>}
       <div className="metric"><b>Brand / type</b><span>{report.brand || 'Unknown'} · {report.productType || 'Unknown'}</span></div>

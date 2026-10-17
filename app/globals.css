@@ -330,21 +330,45 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 @keyframes scanSweep { 0%, 100% { top: 6%; } 50% { top: 92%; } }
 @keyframes scanPulse { 0%, 100% { transform: scale(1); opacity: .8; } 50% { transform: scale(1.15); opacity: 1; } }
 
-/* "Would you try it?" — the person's own verdict, separate from the score */
+/* "Would you try it?" — the person's own verdict, separate from the score.
+   Two options on purpose: a middle "unsure" recorded nothing actionable. */
 .reaction-block { gap: 7px; }
-.reaction-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.reaction-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .reaction {
-  border: 1px solid var(--line); border-radius: 14px; padding: 12px 6px;
+  border: 1px solid var(--line); border-radius: 14px; padding: 13px 6px;
   background: var(--panel2); color: var(--muted);
-  font-weight: 800; font-size: 13px;
-  transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease;
+  font-weight: 800; font-size: 14px;
+  transition: transform .09s cubic-bezier(.3,.8,.4,1), background .15s ease, border-color .15s ease, color .15s ease;
 }
-.reaction:active { transform: scale(.97); }
+/* The press itself has to feel physical — on iOS there is no vibration API
+   to lean on, so the motion is the feedback. */
+.reaction:active { transform: scale(.94); }
 .reaction:disabled { opacity: .6; }
 .reaction.is-set.pass { background: rgba(255,122,144,.14); border-color: rgba(255,122,144,.5); color: var(--bad); }
-.reaction.is-set.maybe { background: rgba(255,209,102,.14); border-color: rgba(255,209,102,.5); color: var(--warn); }
 .reaction.is-set.good { background: rgba(215,255,85,.16); border-color: rgba(215,255,85,.5); color: var(--accent); }
-.recall { color: var(--accent2); }
+@media (prefers-reduced-motion: no-preference) {
+  .reaction.is-set { animation: reactionPop .34s cubic-bezier(.34,1.56,.64,1); }
+}
+@keyframes reactionPop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+/* An instant answer needs to explain itself or it reads as a guess */
+.recall {
+  display: flex; gap: 9px; align-items: flex-start;
+  background: rgba(110,231,183,.08); border: 1px solid rgba(110,231,183,.28);
+  border-radius: 14px; padding: 10px 12px;
+}
+.recall p { margin: 0; font-size: 12.5px; color: var(--accent2); line-height: 1.45; }
+.recall-icon { color: var(--accent2); font-weight: 900; line-height: 1.3; }
+@media (prefers-reduced-motion: no-preference) {
+  .recall { animation: recallIn .3s ease both; }
+}
+@keyframes recallIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.evidence { border-left: 3px solid var(--line); padding-left: 10px; }
 
 /* Scan history rows in Journal — same ledger shape as the session list */
 .scan-row {

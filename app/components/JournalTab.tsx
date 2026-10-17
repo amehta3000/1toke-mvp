@@ -5,6 +5,7 @@ import { feelingOptions } from '@/lib/defaults';
 import { SavedReport } from '@/lib/types';
 import { authFetch } from '@/lib/supabaseBrowser';
 import { trackEvent } from '@/lib/analytics';
+import { tapLight } from '@/lib/haptics';
 
 // Folded in from the old standalone Discover tab: a permanent 4th nav item
 // was dead weight for anyone under 3 rated sessions, so this now lives as a
@@ -56,7 +57,7 @@ export function Stars({ value, onChange }: { value: number; onChange?: (v: numbe
   return <div className={`stars ${onChange ? 'tappable' : ''}`}>
     {[1, 2, 3, 4, 5].map(n =>
       onChange
-        ? <button key={n} className={`star ${n <= value ? 'on' : ''}`} onClick={() => onChange(n)} aria-label={`${n} out of 5`}>★</button>
+        ? <button key={n} className={`star ${n <= value ? 'on' : ''}`} onClick={() => { tapLight(); onChange(n); }} aria-label={`${n} out of 5`}>★</button>
         : <span key={n} className={`star ${n <= value ? 'on' : ''}`}>★</span>
     )}
   </div>;

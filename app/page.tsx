@@ -7,6 +7,7 @@ import { normalizeReport } from '@/lib/report';
 import { getDeviceId, safeGet, safeSet } from '@/lib/storage';
 import { getSupabaseBrowser, authFetch } from '@/lib/supabaseBrowser';
 import { trackEvent } from '@/lib/analytics';
+import { tapLight, tapConfirm } from '@/lib/haptics';
 import Onboarding from './components/Onboarding';
 import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
@@ -61,6 +62,8 @@ export default function Page() {
   const [reaction, setReaction] = useState<Reaction | null>(null);
   const [reacting, setReacting] = useState(false);
   const [fromCache, setFromCache] = useState(false);
+  const [scannedAt, setScannedAt] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<string[]>([]);
   const [searchAttempted, setSearchAttempted] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [analyzeError, setAnalyzeError] = useState<{ message: string; details?: string } | null>(null);
@@ -205,6 +208,8 @@ export default function Page() {
     setReportId(null);
     setReaction(null);
     setFromCache(false);
+    setScannedAt(null);
+    setEvidence([]);
     setAnalyzeError(null);
     setQuestion('');
     onImage(null);
@@ -216,6 +221,8 @@ export default function Page() {
     setReportId(null);
     setReaction(null);
     setFromCache(false);
+    setScannedAt(null);
+    setEvidence([]);
     setAnalyzeError(null);
 
     try {
@@ -251,6 +258,24 @@ export default function Page() {
       setReportId(typeof data.reportId === 'string' ? data.reportId : null);
       setReaction(data.reaction || null);
       setFromCache(Boolean(data.fromCache));
+      setScannedAt(typeof data.scannedAt === 'string' ? data.scannedAt : null);
+
+      // Name the evidence the score was actually built from, using what the
+      // API reports rather than a generic reassurance.
+      const used: string[] = [];
+      if (data.fromCache) {
+        used.push('your saved read of this product');
+      } else {
+        if (image) used.push('your photo');
+        if (data.searchFound) used.push('verified web data');
+        if (!data.searchFound && normalized.terpenes?.length) used.push('typical profile for this strain');
+      }
+      if (data.usedHistory && sessions.length > 0) {
+        used.push(`your ${sessions.length} logged session${sessions.length === 1 ? '' : 's'}`);
+      }
+      used.push('your vibe profile');
+      setEvidence(used);
+
       setSearchAttempted(data.searchAttempted || false);
       setSearchTerm(data.searchLabel || data.searchTerm || '');
       setTab('scan');
@@ -278,6 +303,9 @@ export default function Page() {
     if (!report) return;
     const previous = reaction;
     const next = value === reaction ? null : value;
+    // Fire on the tap itself, not after the round trip — feedback that waits
+    // on the network stops feeling like a response to your finger.
+    if (next) tapConfirm(); else tapLight();
     setReaction(next);
 
     if (!reportId) {
@@ -376,7 +404,7 @@ export default function Page() {
 
       {report && (report.confidence === 'low'
         ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
-        : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} onDismiss={clearReport} />)}
+        : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} scannedAt={scannedAt} evidence={evidence} onDismiss={clearReport} />)}
 
       {!report && <InstallPrompt />}
     </div>}

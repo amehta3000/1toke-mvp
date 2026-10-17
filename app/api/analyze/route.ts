@@ -140,7 +140,7 @@ async function getCachedScan(userId: string | null, productKey: string, fingerpr
     const since = new Date(Date.now() - SCAN_TTL_DAYS * 86400000).toISOString();
     const { data, error } = await supabase
       .from('reports')
-      .select('id, report, reaction')
+      .select('id, report, reaction, created_at')
       .eq('user_id', userId)
       .eq('product_key', productKey)
       .eq('prefs_fingerprint', fingerprint)
@@ -382,7 +382,7 @@ export async function POST(req: NextRequest) {
     if (cached) {
       return NextResponse.json({
         report: normalizeReport(cached.report), reportId: cached.id,
-        reaction: cached.reaction || null, mock: true, fromCache: true
+        reaction: cached.reaction || null, scannedAt: cached.created_at || null, mock: true, fromCache: true
       });
     }
     const report = mockAnalyze(question, prefs);
@@ -557,6 +557,7 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
           report: normalizeReport(cached.report),
           reportId: cached.id,
           reaction: cached.reaction || null,
+          scannedAt: cached.created_at || null,
           mock: false,
           fromCache: true,
           searchAttempted: false,
