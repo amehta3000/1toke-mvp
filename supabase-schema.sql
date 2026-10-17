@@ -12,6 +12,17 @@ create table if not exists reports (
   journal jsonb null
 );
 
+-- Every scan is stored now, not just the ones someone bought, so a report row
+-- carries the person's verdict ('pass' | 'maybe' | 'good', null until they
+-- call it) plus the two keys that let a repeat scan be served from here
+-- instead of from the model.
+alter table reports add column if not exists reaction text null;
+alter table reports add column if not exists product_key text null;
+alter table reports add column if not exists prefs_fingerprint text null;
+
+create index if not exists reports_scan_cache_idx
+  on reports (user_id, product_key, prefs_fingerprint, created_at desc);
+
 create table if not exists user_preferences (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import OpenAI from 'openai';
 import { mockAnalyze } from '@/lib/mock';
 import { normalizeReport, toDisplayText } from '@/lib/report';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { resolveUserId } from '@/lib/serverAuth';
 
 export const runtime = 'nodejs';
 
@@ -40,8 +42,8 @@ function scrubHallucinations(report: any): any {
 // Pull the user's recent session logs and turn them into a compact digest the
 // model can actually learn from. This is what makes the app get smarter as
 // the journal grows.
-async function buildHistoryDigest(deviceId: string | null): Promise<string | null> {
-  if (!deviceId) return null;
+async function buildHistoryDigest(userId: string | null): Promise<string | null> {
+  if (!userId) return null;
   const supabase = getSupabaseAdmin();
   if (!supabase) return null;
 
@@ -49,7 +51,7 @@ async function buildHistoryDigest(deviceId: string | null): Promise<string | nul
     const { data, error } = await supabase
       .from('sessions')
       .select('created_at, strain_name, rating, feelings, notes, would_buy_again, reports(report)')
-      .eq('user_id', deviceId)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(10);
     if (error || !data?.length) return null;
@@ -112,6 +114,62 @@ async function putCachedFacts(key: string, subject: string, context: string): Pr
       .upsert({ cache_key: key, subject, context, created_at: new Date().toISOString() }, { onConflict: 'cache_key' });
   } catch {
     // Caching is an optimisation; never fail the request over it.
+  }
+}
+
+const SCAN_TTL_DAYS = 30;
+
+// What a score actually depends on: the person's toggles/dial AND their recent
+// logged sessions (the model weighs those heavily). Folding the history digest
+// into the fingerprint means logging a new session correctly invalidates the
+// cached verdict instead of freezing a stale one — the whole pitch is that it
+// learns from the journal, so a cache that outlived that would be a bug.
+function prefsFingerprint(prefs: any, historyDigest: string | null): string {
+  const keys = Object.keys(prefs || {}).sort();
+  const normalized = keys.map(k => `${k}=${String(prefs[k])}`).join('|');
+  const history = historyDigest ? createHash('sha1').update(historyDigest).digest('hex') : 'none';
+  return createHash('sha1').update(`${normalized}#${history}`).digest('hex').slice(0, 32);
+}
+
+// A previous scan of this exact product, scored against this exact profile, is
+// a valid answer — serve it and skip the model entirely.
+async function getCachedScan(userId: string | null, productKey: string, fingerprint: string) {
+  const supabase = getSupabaseAdmin();
+  if (!supabase || !userId || !productKey) return null;
+  try {
+    const since = new Date(Date.now() - SCAN_TTL_DAYS * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from('reports')
+      .select('id, report, reaction')
+      .eq('user_id', userId)
+      .eq('product_key', productKey)
+      .eq('prefs_fingerprint', fingerprint)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.report) return null;
+    return data;
+  } catch {
+    return null; // A cache miss is always safe; fall through to a fresh scan.
+  }
+}
+
+// Every scan is kept, not just the bought ones — that's both the person's scan
+// history and the cache that feeds getCachedScan.
+async function saveScan(userId: string | null, productKey: string, fingerprint: string, report: unknown) {
+  const supabase = getSupabaseAdmin();
+  if (!supabase || !userId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('reports')
+      .insert({ user_id: userId, report, product_key: productKey || null, prefs_fingerprint: fingerprint })
+      .select('id')
+      .single();
+    if (error) return null;
+    return data?.id || null;
+  } catch {
+    return null;
   }
 }
 
@@ -307,8 +365,29 @@ export async function POST(req: NextRequest) {
   const deviceId = String(form.get('deviceId') || '') || null;
   const file = form.get('image') as File | null;
 
+  // Scope history and the scan cache to the same identity the rest of the API
+  // resolves — a signed-in person's sessions live under their Supabase user id,
+  // not the legacy device id, so keying off deviceId alone silently lost their
+  // journal once they added an email.
+  const userId = await resolveUserId(req, deviceId);
+  const historyDigest = await buildHistoryDigest(userId);
+  const fingerprint = prefsFingerprint(prefs, historyDigest);
+
+  // Mock mode still stores and caches when a database is configured, so the
+  // scan history and verdict buttons are exercisable locally without keys.
   if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json({ report: mockAnalyze(question, prefs), mock: true });
+    const mockSubject = buildSearchSubject(question, '');
+    const mockKey = /^unknown(?:\s+strain)?$/i.test(mockSubject) ? '' : cacheKeyFor(mockSubject);
+    const cached = mockKey ? await getCachedScan(userId, mockKey, fingerprint) : null;
+    if (cached) {
+      return NextResponse.json({
+        report: normalizeReport(cached.report), reportId: cached.id,
+        reaction: cached.reaction || null, mock: true, fromCache: true
+      });
+    }
+    const report = mockAnalyze(question, prefs);
+    const reportId = await saveScan(userId, mockKey, fingerprint, report);
+    return NextResponse.json({ report, reportId, reaction: null, mock: true, fromCache: false });
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -318,8 +397,6 @@ export async function POST(req: NextRequest) {
     const bytes = Buffer.from(await file.arrayBuffer());
     imageDataUrl = `data:${file.type};base64,${bytes.toString('base64')}`;
   }
-
-  const historyDigest = await buildHistoryDigest(deviceId);
 
   const system = `You are 1Toke: a sharp, honest budtender friend helping an adult make a fast in-store buying decision. You hype products that genuinely fit this person and you are blunt when something is wrong for them. Never provide medical claims. Return ONLY valid JSON.
 
@@ -467,18 +544,42 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     let searchContext: string | null = null;
     let searchCached = false;
     const hasSubject = Boolean(searchSubject) && !/^unknown(?:\s+strain)?$/i.test(searchSubject);
+    const productKey = hasSubject ? cacheKeyFor(searchSubject) : '';
+
+    // Scanning the same jar again, with the same profile and the same journal
+    // behind it, has exactly one right answer — the one already stored. Serve
+    // it and spend no tokens: a typed re-scan costs zero model calls, and a
+    // photo re-scan costs only the one vision call needed to know what it is.
+    if (productKey) {
+      const cached = await getCachedScan(userId, productKey, fingerprint);
+      if (cached) {
+        return NextResponse.json({
+          report: normalizeReport(cached.report),
+          reportId: cached.id,
+          reaction: cached.reaction || null,
+          mock: false,
+          fromCache: true,
+          searchAttempted: false,
+          searchTerm: '',
+          searchLabel: searchSubject,
+          searchFound: false,
+          searchCached: false,
+          usedHistory: Boolean(historyDigest)
+        });
+      }
+    }
+
     if (hasSubject) {
       searchLabel = searchSubject;
       searchTerm = `${searchSubject} cannabis strain dominant terpene profile THC CBD percentage effects`;
       searchAttempted = true;
 
-      const key = cacheKeyFor(searchSubject);
-      searchContext = await getCachedFacts(key);
+      searchContext = await getCachedFacts(productKey);
       searchCached = Boolean(searchContext);
 
       if (!searchContext && process.env.TAVILY_API_KEY) {
         searchContext = await searchWeb(searchTerm);
-        if (searchContext) await putCachedFacts(key, searchSubject, searchContext);
+        if (searchContext) await putCachedFacts(productKey, searchSubject, searchContext);
       }
       searchFound = Boolean(searchContext);
     }
@@ -498,7 +599,14 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     // Derive the verdict from the score so the two can never disagree.
     report = { ...report, matchScore: rounded, buyDecision: decisionForScore(rounded) };
 
-    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) });
+    // Keep every scan, not just the bought ones: this is the person's scan
+    // history and the cache a repeat scan is served from. A low-confidence
+    // read is deliberately not cached — it says nothing worth replaying.
+    const reportId = report.confidence === 'low'
+      ? null
+      : await saveScan(userId, productKey, fingerprint, report);
+
+    return NextResponse.json({ report, reportId, reaction: null, mock: false, fromCache: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) });
   } catch (err: any) {
     const payload = toErrorPayload(err);
     console.error('Analyze API failed', {

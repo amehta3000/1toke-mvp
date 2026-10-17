@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { defaultPreferences, labels } from '@/lib/defaults';
-import { Preferences, SavedReport, StrainReport } from '@/lib/types';
+import { Preferences, Reaction, SavedReport, StrainReport } from '@/lib/types';
 import { normalizeReport } from '@/lib/report';
 import { getDeviceId, safeGet, safeSet } from '@/lib/storage';
 import { getSupabaseBrowser, authFetch } from '@/lib/supabaseBrowser';
@@ -57,12 +57,15 @@ export default function Page() {
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [report, setReport] = useState<StrainReport | null>(null);
+  const [reportId, setReportId] = useState<string | null>(null);
+  const [reaction, setReaction] = useState<Reaction | null>(null);
+  const [reacting, setReacting] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
   const [searchAttempted, setSearchAttempted] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [analyzeError, setAnalyzeError] = useState<{ message: string; details?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingLine, setLoadingLine] = useState(0);
-  const [saving, setSaving] = useState(false);
   const [deviceId, setDeviceId] = useState('');
   const [identity, setIdentity] = useState<IdentityInfo>({ configured: false, isAnonymous: true, email: null });
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
@@ -199,6 +202,9 @@ export default function Page() {
   // "Done with it": wipe the card and reset the scan inputs for the next product.
   function clearReport() {
     setReport(null);
+    setReportId(null);
+    setReaction(null);
+    setFromCache(false);
     setAnalyzeError(null);
     setQuestion('');
     onImage(null);
@@ -207,6 +213,9 @@ export default function Page() {
   async function analyze() {
     setBusy(true);
     setReport(null);
+    setReportId(null);
+    setReaction(null);
+    setFromCache(false);
     setAnalyzeError(null);
 
     try {
@@ -239,15 +248,20 @@ export default function Page() {
 
       const normalized = normalizeReport(data.report);
       setReport(normalized);
+      setReportId(typeof data.reportId === 'string' ? data.reportId : null);
+      setReaction(data.reaction || null);
+      setFromCache(Boolean(data.fromCache));
       setSearchAttempted(data.searchAttempted || false);
       setSearchTerm(data.searchLabel || data.searchTerm || '');
       setTab('scan');
+      if (!data.fromCache) loadSavedReports(deviceId);
       trackEvent('scan_completed', {
         input: image ? 'photo' : 'text',
         decision: normalized.buyDecision,
         confidence: normalized.confidence,
         searchFound: Boolean(data.searchFound),
-        usedHistory: Boolean(data.usedHistory)
+        usedHistory: Boolean(data.usedHistory),
+        fromCache: Boolean(data.fromCache)
       });
     } catch {
       setAnalyzeError({ message: 'Network error while analyzing. Check your connection and try again.' });
@@ -257,29 +271,45 @@ export default function Page() {
     }
   }
 
-  async function saveReport() {
+  // Every scan is already stored server-side; this records what the person
+  // thought of it. Optimistic so the tap feels instant, reverted if the
+  // write fails.
+  async function react(value: Reaction) {
     if (!report) return;
-    setSaving(true);
+    const previous = reaction;
+    const next = value === reaction ? null : value;
+    setReaction(next);
+
+    if (!reportId) {
+      showToast('Scan not stored — run supabase-schema.sql to keep your scans.');
+      setReaction(previous);
+      return;
+    }
+
+    setReacting(true);
     try {
       const res = await authFetch('/api/reports', {
-        method: 'POST',
+        method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ report, deviceId })
+        body: JSON.stringify({ id: reportId, reaction: next, deviceId })
       });
       const data = await res.json().catch(() => ({}));
       if (data?.saved) {
         await loadSavedReports(deviceId);
-        showToast('Saved 🛒 Log the session in Journal after you try it.');
-        trackEvent('report_saved', { decision: report.buyDecision });
-      } else if (data?.localOnly) {
-        showToast('Saved locally — database not configured.');
+        if (next) showToast(next === 'good' ? 'Noted 👍 Saved to your scans.' : next === 'maybe' ? 'Noted 🤔 Saved to your scans.' : 'Noted 👎 I’ll remember you passed.');
+        trackEvent('scan_reaction', { reaction: next || 'cleared', decision: report.buyDecision });
+      } else if (data?.needsMigration) {
+        setReaction(previous);
+        showToast('One-time setup needed: run supabase-schema.sql in Supabase.');
       } else {
-        showToast('Could not save. Please try again.');
+        setReaction(previous);
+        showToast('Could not save that. Try again?');
       }
     } catch {
-      showToast('Network error while saving. Please try again.');
+      setReaction(previous);
+      showToast('Network error. Try again?');
     } finally {
-      setSaving(false);
+      setReacting(false);
     }
   }
 
@@ -322,7 +352,11 @@ export default function Page() {
         </div>
         {preview && <div className="preview-wrap">
           <img className="preview" src={preview} alt="Selected product" />
-          <button className="clear" onClick={() => onImage(null)} aria-label="Remove image">✕</button>
+          {busy && <div className="scan-overlay" aria-hidden="true">
+            <div className="scan-line" />
+            <div className="scan-badge">🌿</div>
+          </div>}
+          {!busy && <button className="clear" onClick={() => onImage(null)} aria-label="Remove image">✕</button>}
         </div>}
         <label>Or just ask
           <textarea value={question} onChange={e => setQuestion(e.target.value)} placeholder="Example: CBX L'Orange 29% THC. Good for creative daytime vibes?" />
@@ -342,7 +376,7 @@ export default function Page() {
 
       {report && (report.confidence === 'low'
         ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
-        : <ReportCard report={report} onSave={saveReport} saving={saving} onDismiss={clearReport} />)}
+        : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} onDismiss={clearReport} />)}
 
       {!report && <InstallPrompt />}
     </div>}

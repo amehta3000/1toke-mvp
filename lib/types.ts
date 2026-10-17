@@ -55,9 +55,15 @@ export type SessionLog = {
   location_lng: number | null;
 };
 
+// What the person thought of a scan, independent of the model's verdict.
+// Null until they call it.
+export type Reaction = 'pass' | 'maybe' | 'good';
+
 export type SavedReport = {
   id: string;
   created_at: string;
   report: Partial<StrainReport> | null;
   journal: unknown;
+  reaction?: Reaction | null;
+  product_key?: string | null;
 };

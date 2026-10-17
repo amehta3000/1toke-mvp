@@ -132,7 +132,9 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const recentReports = savedReports.slice(0, 8);
+  // Every scan is stored now, so the quick-pick skips anything they already
+  // passed on — you don't log a session for something you didn't buy.
+  const recentReports = savedReports.filter(r => r.reaction !== 'pass').slice(0, 8);
   const isEdit = editing !== null && editing !== 'new';
   const patterns = usePatterns(sessions);
 
@@ -343,15 +345,20 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
         </div>}
 
     {savedReports.length > 0 && <div className="card stack">
-      <h3>Products you&apos;ve saved <span className="small">({savedReports.length})</span></h3>
-      {savedReports.slice(0, 10).map(r => {
-        const rep: any = r.report || {};
-        const when = r.created_at ? new Date(r.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-        return <div key={r.id} className="metric">
-          <b>{typeof rep.strainName === 'string' ? rep.strainName : 'Saved report'}</b>
-          <span>{[rep.buyDecision, when].filter(Boolean).join(' · ')}</span>
-        </div>;
-      })}
+      <div className="micro-label">Everything you&apos;ve scanned ({savedReports.length})</div>
+      <div className="session-list">
+        {savedReports.slice(0, 12).map(r => {
+          const rep: any = r.report || {};
+          const when = r.created_at ? shortDate(r.created_at) : '';
+          const verdict = r.reaction === 'good' ? '👍' : r.reaction === 'maybe' ? '🤔' : r.reaction === 'pass' ? '👎' : '—';
+          return <div key={r.id} className="scan-row">
+            <span className="session-date">{when}</span>
+            <span className="session-strain">{typeof rep.strainName === 'string' ? rep.strainName : 'Saved report'}</span>
+            <span className="small">{rep.matchScore ?? '—'}</span>
+            <span className="session-again">{verdict}</span>
+          </div>;
+        })}
+      </div>
     </div>}
   </div>;
 }

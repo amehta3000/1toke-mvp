@@ -303,3 +303,52 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
 }
 
 .loc-chip { margin-bottom: 4px; }
+
+/* Scanning the photo: a lime sweep and a breathing leaf over the preview
+   while the backend works, so the wait reads as the app looking at the
+   label rather than as a frozen screen. */
+.scan-overlay {
+  position: absolute; inset: 0;
+  border-radius: 18px; overflow: hidden; pointer-events: none;
+  background: linear-gradient(180deg, rgba(10,12,16,.55), rgba(10,12,16,.35));
+  display: grid; place-items: center;
+}
+.scan-line {
+  position: absolute; left: 0; right: 0; top: 6%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 20px 5px rgba(215,255,85,.4);
+}
+.scan-badge {
+  font-size: 30px;
+  filter: drop-shadow(0 0 12px rgba(215,255,85,.65));
+}
+@media (prefers-reduced-motion: no-preference) {
+  .scan-line { animation: scanSweep 1.7s ease-in-out infinite; }
+  .scan-badge { animation: scanPulse 1.7s ease-in-out infinite; }
+}
+@keyframes scanSweep { 0%, 100% { top: 6%; } 50% { top: 92%; } }
+@keyframes scanPulse { 0%, 100% { transform: scale(1); opacity: .8; } 50% { transform: scale(1.15); opacity: 1; } }
+
+/* "Would you try it?" — the person's own verdict, separate from the score */
+.reaction-block { gap: 7px; }
+.reaction-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.reaction {
+  border: 1px solid var(--line); border-radius: 14px; padding: 12px 6px;
+  background: var(--panel2); color: var(--muted);
+  font-weight: 800; font-size: 13px;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease, color .15s ease;
+}
+.reaction:active { transform: scale(.97); }
+.reaction:disabled { opacity: .6; }
+.reaction.is-set.pass { background: rgba(255,122,144,.14); border-color: rgba(255,122,144,.5); color: var(--bad); }
+.reaction.is-set.maybe { background: rgba(255,209,102,.14); border-color: rgba(255,209,102,.5); color: var(--warn); }
+.reaction.is-set.good { background: rgba(215,255,85,.16); border-color: rgba(215,255,85,.5); color: var(--accent); }
+.recall { color: var(--accent2); }
+
+/* Scan history rows in Journal — same ledger shape as the session list */
+.scan-row {
+  display: grid; grid-template-columns: 52px minmax(0,1fr) auto auto;
+  align-items: center; gap: 10px; padding: 10px 2px;
+}
+.scan-row + .scan-row { border-top: 1px solid var(--line); }
