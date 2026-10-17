@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
-
-// "relation does not exist" — the sessions migration hasn't been run yet.
-function isMissingTable(error: { code?: string } | null): boolean {
-  return error?.code === '42P01';
-}
+import { isMissingMigration } from '@/lib/pgErrors';
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin();
@@ -21,7 +17,7 @@ export async function GET(req: NextRequest) {
     .limit(100);
 
   if (error) {
-    if (isMissingTable(error)) {
+    if (isMissingMigration(error)) {
       return NextResponse.json({ sessions: [], needsMigration: true });
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -31,12 +27,17 @@ export async function GET(req: NextRequest) {
 
 function sessionFields(body: any) {
   const rating = Number(body.rating);
+  const lat = Number(body.locationLat);
+  const lng = Number(body.locationLng);
   return {
     strain_name: typeof body.strainName === 'string' ? body.strainName.slice(0, 120) : '',
     rating: Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null,
     feelings: Array.isArray(body.feelings) ? body.feelings.filter((f: unknown) => typeof f === 'string').slice(0, 12) : null,
     notes: typeof body.notes === 'string' && body.notes.trim() ? body.notes.trim().slice(0, 2000) : null,
-    would_buy_again: typeof body.wouldBuyAgain === 'boolean' ? body.wouldBuyAgain : null
+    would_buy_again: typeof body.wouldBuyAgain === 'boolean' ? body.wouldBuyAgain : null,
+    // Opt-in only: the client only sends these when the person tapped "tag this location".
+    location_lat: Number.isFinite(lat) ? lat : null,
+    location_lng: Number.isFinite(lng) ? lng : null
   };
 }
 
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabase.from('sessions').insert(row).select().single();
 
   if (error) {
-    if (isMissingTable(error)) {
+    if (isMissingMigration(error)) {
       return NextResponse.json({ saved: false, needsMigration: true });
     }
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -80,7 +81,12 @@ export async function PATCH(req: NextRequest) {
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    if (isMissingMigration(error)) {
+      return NextResponse.json({ saved: false, needsMigration: true });
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json({ saved: true, session: data });
 }
 

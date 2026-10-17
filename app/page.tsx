@@ -2,18 +2,19 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { defaultPreferences, labels } from '@/lib/defaults';
-import { Preferences, SavedReport, StrainReport } from '@/lib/types';
+import { Preferences, Reaction, SavedReport, StrainReport } from '@/lib/types';
 import { normalizeReport } from '@/lib/report';
 import { getDeviceId, safeGet, safeSet } from '@/lib/storage';
 import { getSupabaseBrowser, authFetch } from '@/lib/supabaseBrowser';
 import { trackEvent } from '@/lib/analytics';
+import { tapLight, tapConfirm } from '@/lib/haptics';
 import Onboarding from './components/Onboarding';
 import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
-import DiscoverTab from './components/DiscoverTab';
 import ProfileTab from './components/ProfileTab';
 import InstallPrompt from './components/InstallPrompt';
 import AccountCard from './components/AccountCard';
+import TunedForStrip from './components/TunedForStrip';
 
 const storageKey = '1toke:prefs';
 const onboardedKey = '1toke:onboarded';
@@ -32,43 +33,42 @@ const loadingLines = [
 const navItems = [
   { id: 'scan', label: 'Scan', icon: '🔍' },
   { id: 'journal', label: 'Journal', icon: '📓' },
-  { id: 'discover', label: 'Discover', icon: '🧭' },
   { id: 'profile', label: 'Profile', icon: '🎛' }
 ] as const;
 
+// One line, not three: the old kicker + h1 + subhead block repeated the same
+// orientation on every tab visit. Each tab now opens with a single sentence.
 const heroCopy = {
-  scan: {
-    title: 'Scan before you buy.',
-    sub: 'Snap a label or ask about a strain. Get a personal match score and a straight Buy / Maybe / Skip.'
-  },
-  journal: {
-    title: 'Log it while it’s fresh.',
-    sub: 'Ten seconds of taps per session — this is what teaches 1Toke what actually works on you.'
-  },
-  discover: {
-    title: 'Know your patterns.',
-    sub: 'What your logged sessions say about the strains, terpenes, and feelings that suit you.'
-  },
-  profile: {
-    title: 'Make it yours.',
-    sub: 'Your vibe, your limits. Every verdict is scored against what you set here.'
-  }
+  scan: 'What vibe are you going for?',
+  journal: 'Log it. Future you says thanks.',
+  profile: 'This is what I always start from.'
 } as const;
 
 export default function Page() {
-  const [tab, setTab] = useState<'scan'|'journal'|'discover'|'profile'>('scan');
+  const [tab, setTab] = useState<'scan'|'journal'|'profile'>('scan');
   const [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
+  // What THIS scan is scored against. Starts as a copy of the saved profile
+  // and stays in sync with it, but tapping a chip in the Scan tuned-for strip
+  // only touches this — the saved profile doesn't move until Profile itself
+  // is edited.
+  const [sessionPrefs, setSessionPrefs] = useState<Preferences>(defaultPreferences);
+  const [armed, setArmed] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [question, setQuestion] = useState('');
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [report, setReport] = useState<StrainReport | null>(null);
+  const [reportId, setReportId] = useState<string | null>(null);
+  const [reaction, setReaction] = useState<Reaction | null>(null);
+  const [reacting, setReacting] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
+  const [scannedAt, setScannedAt] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<string[]>([]);
   const [searchAttempted, setSearchAttempted] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [analyzeError, setAnalyzeError] = useState<{ message: string; details?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingLine, setLoadingLine] = useState(0);
-  const [saving, setSaving] = useState(false);
   const [deviceId, setDeviceId] = useState('');
   const [identity, setIdentity] = useState<IdentityInfo>({ configured: false, isAnonymous: true, email: null });
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
@@ -171,6 +171,18 @@ export default function Page() {
     initIdentity(id);
   }, []);
   useEffect(() => { safeSet(storageKey, JSON.stringify(prefs)); }, [prefs]);
+  useEffect(() => { setSessionPrefs(prefs); }, [prefs]);
+
+  // PWA shortcut (manifest.ts) lands here with ?action=scan — can't force the
+  // OS camera picker open without a user gesture, so instead the Snap tile
+  // pulses briefly to prompt the one tap that opens it.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('action') !== 'scan') return;
+    setArmed(true);
+    const timer = setTimeout(() => setArmed(false), 1600);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!busy) { setLoadingLine(0); return; }
@@ -193,21 +205,37 @@ export default function Page() {
   // "Done with it": wipe the card and reset the scan inputs for the next product.
   function clearReport() {
     setReport(null);
+    setReportId(null);
+    setReaction(null);
+    setFromCache(false);
+    setScannedAt(null);
+    setEvidence([]);
     setAnalyzeError(null);
     setQuestion('');
     onImage(null);
   }
 
-  async function analyze() {
+  async function analyze(opts?: { force?: boolean }) {
     setBusy(true);
     setReport(null);
+    setReportId(null);
+    // A forced re-scan keeps the verdict on screen — it's their call, not
+    // something a fresh score should quietly reset.
+    if (!opts?.force) setReaction(null);
+    setFromCache(false);
+    setScannedAt(null);
+    setEvidence([]);
     setAnalyzeError(null);
 
     try {
       const form = new FormData();
       form.set('question', question);
-      form.set('preferences', JSON.stringify(prefs));
+      form.set('preferences', JSON.stringify(sessionPrefs));
       form.set('deviceId', deviceId);
+      if (opts?.force) {
+        form.set('force', '1');
+        if (reaction) form.set('priorReaction', reaction);
+      }
       if (image) form.set('image', image);
 
       const res = await authFetch('/api/analyze', { method: 'POST', body: form });
@@ -233,15 +261,38 @@ export default function Page() {
 
       const normalized = normalizeReport(data.report);
       setReport(normalized);
+      setReportId(typeof data.reportId === 'string' ? data.reportId : null);
+      setReaction(data.reaction || null);
+      setFromCache(Boolean(data.fromCache));
+      setScannedAt(typeof data.scannedAt === 'string' ? data.scannedAt : null);
+
+      // Name the evidence the score was actually built from, using what the
+      // API reports rather than a generic reassurance.
+      const used: string[] = [];
+      if (data.fromCache) {
+        used.push('your saved read of this product');
+      } else {
+        if (image) used.push('your photo');
+        if (data.searchFound) used.push('verified web data');
+        if (!data.searchFound && normalized.terpenes?.length) used.push('typical profile for this strain');
+      }
+      if (data.usedHistory && sessions.length > 0) {
+        used.push(`your ${sessions.length} logged session${sessions.length === 1 ? '' : 's'}`);
+      }
+      used.push('your vibe profile');
+      setEvidence(used);
+
       setSearchAttempted(data.searchAttempted || false);
       setSearchTerm(data.searchLabel || data.searchTerm || '');
       setTab('scan');
+      if (!data.fromCache) loadSavedReports(deviceId);
       trackEvent('scan_completed', {
         input: image ? 'photo' : 'text',
         decision: normalized.buyDecision,
         confidence: normalized.confidence,
         searchFound: Boolean(data.searchFound),
-        usedHistory: Boolean(data.usedHistory)
+        usedHistory: Boolean(data.usedHistory),
+        fromCache: Boolean(data.fromCache)
       });
     } catch {
       setAnalyzeError({ message: 'Network error while analyzing. Check your connection and try again.' });
@@ -251,29 +302,48 @@ export default function Page() {
     }
   }
 
-  async function saveReport() {
+  // Every scan is already stored server-side; this records what the person
+  // thought of it. Optimistic so the tap feels instant, reverted if the
+  // write fails.
+  async function react(value: Reaction) {
     if (!report) return;
-    setSaving(true);
+    const previous = reaction;
+    const next = value === reaction ? null : value;
+    // Fire on the tap itself, not after the round trip — feedback that waits
+    // on the network stops feeling like a response to your finger.
+    if (next) tapConfirm(); else tapLight();
+    setReaction(next);
+
+    if (!reportId) {
+      showToast('Scan not stored — run supabase-schema.sql to keep your scans.');
+      setReaction(previous);
+      return;
+    }
+
+    setReacting(true);
     try {
       const res = await authFetch('/api/reports', {
-        method: 'POST',
+        method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ report, deviceId })
+        body: JSON.stringify({ id: reportId, reaction: next, deviceId })
       });
       const data = await res.json().catch(() => ({}));
       if (data?.saved) {
         await loadSavedReports(deviceId);
-        showToast('Saved 🛒 Log the session in Journal after you try it.');
-        trackEvent('report_saved', { decision: report.buyDecision });
-      } else if (data?.localOnly) {
-        showToast('Saved locally — database not configured.');
+        if (next) showToast(next === 'good' ? 'Noted 👍 Saved to your scans.' : next === 'maybe' ? 'Noted 🤔 Saved to your scans.' : 'Noted 👎 I’ll remember you passed.');
+        trackEvent('scan_reaction', { reaction: next || 'cleared', decision: report.buyDecision });
+      } else if (data?.needsMigration) {
+        setReaction(previous);
+        showToast('One-time setup needed: run supabase-schema.sql in Supabase.');
       } else {
-        showToast('Could not save. Please try again.');
+        setReaction(previous);
+        showToast('Could not save that. Try again?');
       }
     } catch {
-      showToast('Network error while saving. Please try again.');
+      setReaction(previous);
+      showToast('Network error. Try again?');
     } finally {
-      setSaving(false);
+      setReacting(false);
     }
   }
 
@@ -297,16 +367,17 @@ export default function Page() {
   }
 
   return <main className="app">
-    <section className="hero">
-      <div className="kicker">1Toke</div>
-      <h1>{heroCopy[tab].title}</h1>
-      <p>{heroCopy[tab].sub}</p>
+    <div className="brandbar">🌿 1Toke</div>
+    <section className="hero-line">
+      <h1>{heroCopy[tab]}</h1>
     </section>
 
     {tab === 'scan' && <div className="stack">
       <div className="card stack">
+        <TunedForStrip sessionPrefs={sessionPrefs} setSessionPrefs={setSessionPrefs} savedPrefs={prefs} />
+
         <div className="row">
-          <label className="filebtn">📷 Snap the label
+          <label className={`filebtn ${armed ? 'armed' : ''}`}>📷 Snap the label
             <input type="file" accept="image/*" capture="environment" onChange={e => { onImage(e.target.files?.[0] || null); e.target.value = ''; }} />
           </label>
           <label className="filebtn">🖼 From gallery
@@ -315,12 +386,16 @@ export default function Page() {
         </div>
         {preview && <div className="preview-wrap">
           <img className="preview" src={preview} alt="Selected product" />
-          <button className="clear" onClick={() => onImage(null)} aria-label="Remove image">✕</button>
+          {busy && <div className="scan-overlay" aria-hidden="true">
+            <div className="scan-line" />
+            <div className="scan-badge">🌿</div>
+          </div>}
+          {!busy && <button className="clear" onClick={() => onImage(null)} aria-label="Remove image">✕</button>}
         </div>}
         <label>Or just ask
           <textarea value={question} onChange={e => setQuestion(e.target.value)} placeholder="Example: CBX L'Orange 29% THC. Good for creative daytime vibes?" />
         </label>
-        <button className="primary" onClick={analyze} disabled={busy || (!question.trim() && !image)}>
+        <button className="primary" onClick={() => analyze()} disabled={busy || (!question.trim() && !image)}>
           {busy ? loadingLines[loadingLine] : 'Get the verdict'}
         </button>
         {analyzeError && <div className="card stack" role="alert" aria-live="polite">
@@ -331,14 +406,11 @@ export default function Page() {
             <p className="small">{analyzeError.details}</p>
           </details>}
         </div>}
-        <button className="tuning small" onClick={() => setTab('profile')}>
-          🎛 Tuned for: {activeWants.join(' · ') || 'nothing yet — tap to set your vibe'}
-        </button>
       </div>
 
       {report && (report.confidence === 'low'
         ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
-        : <ReportCard report={report} onSave={saveReport} saving={saving} onDismiss={clearReport} />)}
+        : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} scannedAt={scannedAt} evidence={evidence} onRescan={() => analyze({ force: true })} onDismiss={clearReport} />)}
 
       {!report && <InstallPrompt />}
     </div>}
@@ -353,8 +425,6 @@ export default function Page() {
       showAccountNudge={identity.configured && identity.isAnonymous && sessions.length >= 2}
       onAccountNudge={() => setTab('profile')}
     />}
-
-    {tab === 'discover' && <DiscoverTab sessions={sessions} />}
 
     {tab === 'profile' && <div className="stack">
       <ProfileTab prefs={prefs} setPrefs={setPrefs} onReplaySetup={() => setShowOnboarding(true)} />

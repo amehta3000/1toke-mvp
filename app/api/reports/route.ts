@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
+import { isMissingMigration } from '@/lib/pgErrors';
+import { REACTION_VALUES } from '@/lib/types';
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin();
@@ -30,5 +32,31 @@ export async function POST(req: NextRequest) {
     .select()
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ saved: true, report: data });
+}
+
+// Record what the person actually thought of a scan: pass / maybe / good.
+// Scoped to user_id so one person can't relabel another's scans.
+export async function PATCH(req: NextRequest) {
+  const body = await req.json();
+  const id = typeof body.id === 'string' ? body.id : '';
+  const reaction = REACTION_VALUES.includes(body.reaction) ? body.reaction : null;
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return NextResponse.json({ saved: false, localOnly: true });
+  const userId = await resolveUserId(req, typeof body.deviceId === 'string' ? body.deviceId : null);
+  if (!id || !userId) return NextResponse.json({ error: 'Missing id or identity' }, { status: 400 });
+
+  const { data, error } = await supabase
+    .from('reports')
+    .update({ reaction })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    if (isMissingMigration(error)) return NextResponse.json({ saved: false, needsMigration: true });
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json({ saved: true, report: data });
 }

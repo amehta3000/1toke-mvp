@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import OpenAI from 'openai';
 import { mockAnalyze } from '@/lib/mock';
 import { normalizeReport, toDisplayText } from '@/lib/report';
 import { getSupabaseAdmin } from '@/lib/supabase';
+import { resolveUserId } from '@/lib/serverAuth';
+import { REACTION_VALUES } from '@/lib/types';
 
 export const runtime = 'nodejs';
 
@@ -40,8 +43,8 @@ function scrubHallucinations(report: any): any {
 // Pull the user's recent session logs and turn them into a compact digest the
 // model can actually learn from. This is what makes the app get smarter as
 // the journal grows.
-async function buildHistoryDigest(deviceId: string | null): Promise<string | null> {
-  if (!deviceId) return null;
+async function buildHistoryDigest(userId: string | null): Promise<string | null> {
+  if (!userId) return null;
   const supabase = getSupabaseAdmin();
   if (!supabase) return null;
 
@@ -49,7 +52,7 @@ async function buildHistoryDigest(deviceId: string | null): Promise<string | nul
     const { data, error } = await supabase
       .from('sessions')
       .select('created_at, strain_name, rating, feelings, notes, would_buy_again, reports(report)')
-      .eq('user_id', deviceId)
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(10);
     if (error || !data?.length) return null;
@@ -112,6 +115,71 @@ async function putCachedFacts(key: string, subject: string, context: string): Pr
       .upsert({ cache_key: key, subject, context, created_at: new Date().toISOString() }, { onConflict: 'cache_key' });
   } catch {
     // Caching is an optimisation; never fail the request over it.
+  }
+}
+
+const SCAN_TTL_DAYS = 30;
+
+// Bump this whenever the scoring rubric in the system prompt changes. It is
+// folded into the fingerprint along with the model name, so improving the
+// rubric or upgrading OPENAI_MODEL invalidates every cached scan at once —
+// without it, a better model's answer wouldn't reach anyone holding a cached
+// verdict until the 30-day TTL expired or they manually re-scanned.
+const SCORING_VERSION = '2026-10-17';
+
+// What a score actually depends on: the person's toggles/dial, their recent
+// logged sessions (the model weighs those heavily), and the scorer itself.
+// Folding the history digest in means logging a new session correctly
+// invalidates the cached verdict instead of freezing a stale one — the whole
+// pitch is that it learns from the journal, so a cache that outlived that
+// would be a bug.
+function prefsFingerprint(prefs: any, historyDigest: string | null): string {
+  const keys = Object.keys(prefs || {}).sort();
+  const normalized = keys.map(k => `${k}=${String(prefs[k])}`).join('|');
+  const history = historyDigest ? createHash('sha1').update(historyDigest).digest('hex') : 'none';
+  const scorer = `${SCORING_VERSION}@${process.env.OPENAI_MODEL || 'gpt-4.1-mini'}`;
+  return createHash('sha1').update(`${normalized}#${history}#${scorer}`).digest('hex').slice(0, 32);
+}
+
+// A previous scan of this exact product, scored against this exact profile, is
+// a valid answer — serve it and skip the model entirely.
+async function getCachedScan(userId: string | null, productKey: string, fingerprint: string) {
+  const supabase = getSupabaseAdmin();
+  if (!supabase || !userId || !productKey) return null;
+  try {
+    const since = new Date(Date.now() - SCAN_TTL_DAYS * 86400000).toISOString();
+    const { data, error } = await supabase
+      .from('reports')
+      .select('id, report, reaction, created_at')
+      .eq('user_id', userId)
+      .eq('product_key', productKey)
+      .eq('prefs_fingerprint', fingerprint)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.report) return null;
+    return data;
+  } catch {
+    return null; // A cache miss is always safe; fall through to a fresh scan.
+  }
+}
+
+// Every scan is kept, not just the bought ones — that's both the person's scan
+// history and the cache that feeds getCachedScan.
+async function saveScan(userId: string | null, productKey: string, fingerprint: string, report: unknown, reaction: string | null = null) {
+  const supabase = getSupabaseAdmin();
+  if (!supabase || !userId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('reports')
+      .insert({ user_id: userId, report, product_key: productKey || null, prefs_fingerprint: fingerprint, reaction })
+      .select('id')
+      .single();
+    if (error) return null;
+    return data?.id || null;
+  } catch {
+    return null;
   }
 }
 
@@ -306,9 +374,36 @@ export async function POST(req: NextRequest) {
   const prefs = JSON.parse(String(form.get('preferences') || '{}'));
   const deviceId = String(form.get('deviceId') || '') || null;
   const file = form.get('image') as File | null;
+  // "Scan it fresh": the saved read is wrong or the batch is different, so
+  // ignore the cache and pay for a real look. The verdict they already gave
+  // rides along so a new score doesn't wipe their own call.
+  const force = String(form.get('force') || '') === '1';
+  const rawPrior = String(form.get('priorReaction') || '');
+  const priorReaction = (REACTION_VALUES as readonly string[]).includes(rawPrior) ? rawPrior : null;
 
+  // Scope history and the scan cache to the same identity the rest of the API
+  // resolves — a signed-in person's sessions live under their Supabase user id,
+  // not the legacy device id, so keying off deviceId alone silently lost their
+  // journal once they added an email.
+  const userId = await resolveUserId(req, deviceId);
+  const historyDigest = await buildHistoryDigest(userId);
+  const fingerprint = prefsFingerprint(prefs, historyDigest);
+
+  // Mock mode still stores and caches when a database is configured, so the
+  // scan history and verdict buttons are exercisable locally without keys.
   if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json({ report: mockAnalyze(question, prefs), mock: true });
+    const mockSubject = buildSearchSubject(question, '');
+    const mockKey = /^unknown(?:\s+strain)?$/i.test(mockSubject) ? '' : cacheKeyFor(mockSubject);
+    const cached = mockKey && !force ? await getCachedScan(userId, mockKey, fingerprint) : null;
+    if (cached) {
+      return NextResponse.json({
+        report: normalizeReport(cached.report), reportId: cached.id,
+        reaction: cached.reaction || null, scannedAt: cached.created_at || null, mock: true, fromCache: true
+      });
+    }
+    const report = mockAnalyze(question, prefs);
+    const reportId = await saveScan(userId, mockKey, fingerprint, report, priorReaction);
+    return NextResponse.json({ report, reportId, reaction: priorReaction, mock: true, fromCache: false });
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -318,8 +413,6 @@ export async function POST(req: NextRequest) {
     const bytes = Buffer.from(await file.arrayBuffer());
     imageDataUrl = `data:${file.type};base64,${bytes.toString('base64')}`;
   }
-
-  const historyDigest = await buildHistoryDigest(deviceId);
 
   const system = `You are 1Toke: a sharp, honest budtender friend helping an adult make a fast in-store buying decision. You hype products that genuinely fit this person and you are blunt when something is wrong for them. Never provide medical claims. Return ONLY valid JSON.
 
@@ -345,6 +438,13 @@ Adventure mode: safe = -5 for an unfamiliar profile; explore = no adjustment;
 surprise = +5 for something novel.
 Session history (when provided): up to +15 when the profile closely matches a
 4-5★ logged session, up to -15 when it matches a 1-2★ one.
+Head/body lean: the user's preference toggles include headBodyLean, 0-100
+(0 = purely head/cerebral, 100 = purely body/physical). Estimate where this
+product's actual terpene profile falls on the same 0-100 scale (myrcene/
+linalool-dominant reads high/body; limonene/pinene/terpinolene-dominant reads
+low/head) — only when you have VERIFIED or TYPICAL terpene evidence, never
+guess this from the strain name alone. +8 if your estimate is within 15
+points of headBodyLean, -8 if it's 50+ points apart, otherwise no adjustment.
 
 Then clamp to 0-100 and round to the nearest whole number.
 
@@ -386,6 +486,17 @@ If the product resembles something they logged (same strain, terpene profile, or
 STRAIN TYPE:
 - strainType: one of "Sativa", "Indica", "Hybrid — sativa-leaning", "Hybrid — indica-leaning", "Hybrid — balanced", or "" if you genuinely don't know. Use the label or well-documented lineage; do not guess from the name alone.
 
+LABEL CHECK — Indica/Sativa/Hybrid printed on packaging is frequently marketing,
+not chemistry; the terpene profile is the more honest signal.
+- labelCheck: ONLY set this (as one sentence) when you have VERIFIED or TYPICAL
+  terpene evidence AND that evidence meaningfully conflicts with the printed
+  strainType — e.g. labeled "Indica" but limonene/pinene-forward (reads
+  head/uplifting), or labeled "Sativa" but myrcene-dominant (reads body/
+  sedating). Name the terpenes and say plainly it reads closer to the other
+  lean than the label suggests. Otherwise omit labelCheck entirely (do not
+  return an empty string) — most products won't have a meaningful mismatch,
+  and inventing one defeats the point.
+
 BRAND INTEL:
 - brandNotes: 1–2 short, useful sentences about the brand ONLY if you actually recognize it — reputation (well-regarded, budget shelf, premium), how established they are, and anything genuinely notable (solventless extraction, single-farm flower, known for accurate labeling, etc.). Same honest voice as quickTake. If you don't recognize the brand, return "" — never invent a reputation.
 
@@ -414,12 +525,12 @@ When confidence is LOW, set these fields explicitly:
 - buyDecision: "Maybe"
 - missingInfo: List exactly what data you need (e.g., "strain name", "THC percentage from label", "product label photo")
 
-Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array.`;
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array, labelCheck (string, omit if no meaningful mismatch).`;
 
   const userText = `Analyze this product/strain for a quick in-store buying decision.
 Question or typed label: ${question}
 User preference toggles: ${JSON.stringify(prefs)}
-Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array.`;
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array, labelCheck (string, omit if no meaningful mismatch).`;
 
   const input: any[] = [{ role: 'system', content: system }];
   input.push({
@@ -449,18 +560,43 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     let searchContext: string | null = null;
     let searchCached = false;
     const hasSubject = Boolean(searchSubject) && !/^unknown(?:\s+strain)?$/i.test(searchSubject);
+    const productKey = hasSubject ? cacheKeyFor(searchSubject) : '';
+
+    // Scanning the same jar again, with the same profile and the same journal
+    // behind it, has exactly one right answer — the one already stored. Serve
+    // it and spend no tokens: a typed re-scan costs zero model calls, and a
+    // photo re-scan costs only the one vision call needed to know what it is.
+    if (productKey && !force) {
+      const cached = await getCachedScan(userId, productKey, fingerprint);
+      if (cached) {
+        return NextResponse.json({
+          report: normalizeReport(cached.report),
+          reportId: cached.id,
+          reaction: cached.reaction || null,
+          scannedAt: cached.created_at || null,
+          mock: false,
+          fromCache: true,
+          searchAttempted: false,
+          searchTerm: '',
+          searchLabel: searchSubject,
+          searchFound: false,
+          searchCached: false,
+          usedHistory: Boolean(historyDigest)
+        });
+      }
+    }
+
     if (hasSubject) {
       searchLabel = searchSubject;
       searchTerm = `${searchSubject} cannabis strain dominant terpene profile THC CBD percentage effects`;
       searchAttempted = true;
 
-      const key = cacheKeyFor(searchSubject);
-      searchContext = await getCachedFacts(key);
+      searchContext = await getCachedFacts(productKey);
       searchCached = Boolean(searchContext);
 
       if (!searchContext && process.env.TAVILY_API_KEY) {
         searchContext = await searchWeb(searchTerm);
-        if (searchContext) await putCachedFacts(key, searchSubject, searchContext);
+        if (searchContext) await putCachedFacts(productKey, searchSubject, searchContext);
       }
       searchFound = Boolean(searchContext);
     }
@@ -480,7 +616,14 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     // Derive the verdict from the score so the two can never disagree.
     report = { ...report, matchScore: rounded, buyDecision: decisionForScore(rounded) };
 
-    return NextResponse.json({ report, mock: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) });
+    // Keep every scan, not just the bought ones: this is the person's scan
+    // history and the cache a repeat scan is served from. A low-confidence
+    // read is deliberately not cached — it says nothing worth replaying.
+    const reportId = report.confidence === 'low'
+      ? null
+      : await saveScan(userId, productKey, fingerprint, report, priorReaction);
+
+    return NextResponse.json({ report, reportId, reaction: priorReaction, mock: false, fromCache: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) });
   } catch (err: any) {
     const payload = toErrorPayload(err);
     console.error('Analyze API failed', {
