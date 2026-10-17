@@ -120,16 +120,25 @@ async function putCachedFacts(key: string, subject: string, context: string): Pr
 
 const SCAN_TTL_DAYS = 30;
 
-// What a score actually depends on: the person's toggles/dial AND their recent
-// logged sessions (the model weighs those heavily). Folding the history digest
-// into the fingerprint means logging a new session correctly invalidates the
-// cached verdict instead of freezing a stale one — the whole pitch is that it
-// learns from the journal, so a cache that outlived that would be a bug.
+// Bump this whenever the scoring rubric in the system prompt changes. It is
+// folded into the fingerprint along with the model name, so improving the
+// rubric or upgrading OPENAI_MODEL invalidates every cached scan at once —
+// without it, a better model's answer wouldn't reach anyone holding a cached
+// verdict until the 30-day TTL expired or they manually re-scanned.
+const SCORING_VERSION = '2026-10-17';
+
+// What a score actually depends on: the person's toggles/dial, their recent
+// logged sessions (the model weighs those heavily), and the scorer itself.
+// Folding the history digest in means logging a new session correctly
+// invalidates the cached verdict instead of freezing a stale one — the whole
+// pitch is that it learns from the journal, so a cache that outlived that
+// would be a bug.
 function prefsFingerprint(prefs: any, historyDigest: string | null): string {
   const keys = Object.keys(prefs || {}).sort();
   const normalized = keys.map(k => `${k}=${String(prefs[k])}`).join('|');
   const history = historyDigest ? createHash('sha1').update(historyDigest).digest('hex') : 'none';
-  return createHash('sha1').update(`${normalized}#${history}`).digest('hex').slice(0, 32);
+  const scorer = `${SCORING_VERSION}@${process.env.OPENAI_MODEL || 'gpt-4.1-mini'}`;
+  return createHash('sha1').update(`${normalized}#${history}#${scorer}`).digest('hex').slice(0, 32);
 }
 
 // A previous scan of this exact product, scored against this exact profile, is
