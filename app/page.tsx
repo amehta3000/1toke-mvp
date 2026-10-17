@@ -215,11 +215,13 @@ export default function Page() {
     onImage(null);
   }
 
-  async function analyze() {
+  async function analyze(opts?: { force?: boolean }) {
     setBusy(true);
     setReport(null);
     setReportId(null);
-    setReaction(null);
+    // A forced re-scan keeps the verdict on screen — it's their call, not
+    // something a fresh score should quietly reset.
+    if (!opts?.force) setReaction(null);
     setFromCache(false);
     setScannedAt(null);
     setEvidence([]);
@@ -230,6 +232,10 @@ export default function Page() {
       form.set('question', question);
       form.set('preferences', JSON.stringify(sessionPrefs));
       form.set('deviceId', deviceId);
+      if (opts?.force) {
+        form.set('force', '1');
+        if (reaction) form.set('priorReaction', reaction);
+      }
       if (image) form.set('image', image);
 
       const res = await authFetch('/api/analyze', { method: 'POST', body: form });
@@ -389,7 +395,7 @@ export default function Page() {
         <label>Or just ask
           <textarea value={question} onChange={e => setQuestion(e.target.value)} placeholder="Example: CBX L'Orange 29% THC. Good for creative daytime vibes?" />
         </label>
-        <button className="primary" onClick={analyze} disabled={busy || (!question.trim() && !image)}>
+        <button className="primary" onClick={() => analyze()} disabled={busy || (!question.trim() && !image)}>
           {busy ? loadingLines[loadingLine] : 'Get the verdict'}
         </button>
         {analyzeError && <div className="card stack" role="alert" aria-live="polite">
@@ -404,7 +410,7 @@ export default function Page() {
 
       {report && (report.confidence === 'low'
         ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
-        : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} scannedAt={scannedAt} evidence={evidence} onDismiss={clearReport} />)}
+        : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} scannedAt={scannedAt} evidence={evidence} onRescan={() => analyze({ force: true })} onDismiss={clearReport} />)}
 
       {!report && <InstallPrompt />}
     </div>}

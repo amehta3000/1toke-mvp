@@ -53,7 +53,7 @@ function scannedAgo(iso?: string | null): string {
 // The glance view is the whole point: word + score + one line, nothing else,
 // so a Buy/Maybe/Skip call is readable in a couple of seconds in a store.
 // Everything else — why, brand, terpenes, dosing — is one tap away.
-export function ReportCard({ report, reaction, onReact, reacting, fromCache, scannedAt, evidence, onDismiss }: {
+export function ReportCard({ report, reaction, onReact, reacting, fromCache, scannedAt, evidence, onRescan, onDismiss }: {
   report: StrainReport;
   reaction: Reaction | null;
   onReact: (value: Reaction) => void;
@@ -61,6 +61,7 @@ export function ReportCard({ report, reaction, onReact, reacting, fromCache, sca
   fromCache?: boolean;
   scannedAt?: string | null;
   evidence?: string[];
+  onRescan?: () => void;
   onDismiss: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -80,7 +81,10 @@ export function ReportCard({ report, reaction, onReact, reacting, fromCache, sca
         actually think". This says the speed is memory, not a shortcut. */}
     {fromCache && <div className="recall">
       <span className="recall-icon">↩</span>
-      <p>You scanned this{scannedAgo(scannedAt)}{reaction ? ` and ${REACTION_PAST[reaction]}` : ''}. Same profile since, so this is your saved read.</p>
+      <div>
+        <p>You scanned this{scannedAgo(scannedAt)}{reaction ? ` and ${REACTION_PAST[reaction]}` : ''}. Same profile since, so this is your saved read.</p>
+        {onRescan && <button className="rescan-link" onClick={onRescan}>↻ Scan it fresh instead</button>}
+      </div>
     </div>}
 
     <div className="stack reaction-block">

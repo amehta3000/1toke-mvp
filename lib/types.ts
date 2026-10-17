@@ -56,8 +56,10 @@ export type SessionLog = {
 };
 
 // What the person thought of a scan, independent of the model's verdict.
-// Null until they call it.
-export type Reaction = 'pass' | 'maybe' | 'good';
+// Null until they call it. 'maybe' is no longer offered in the UI but stays
+// valid so rows already written with it keep working.
+export const REACTION_VALUES = ['pass', 'maybe', 'good'] as const;
+export type Reaction = typeof REACTION_VALUES[number];
 
 export type SavedReport = {
   id: string;

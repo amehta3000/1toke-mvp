@@ -5,6 +5,7 @@ import { mockAnalyze } from '@/lib/mock';
 import { normalizeReport, toDisplayText } from '@/lib/report';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
+import { REACTION_VALUES } from '@/lib/types';
 
 export const runtime = 'nodejs';
 
@@ -157,13 +158,13 @@ async function getCachedScan(userId: string | null, productKey: string, fingerpr
 
 // Every scan is kept, not just the bought ones — that's both the person's scan
 // history and the cache that feeds getCachedScan.
-async function saveScan(userId: string | null, productKey: string, fingerprint: string, report: unknown) {
+async function saveScan(userId: string | null, productKey: string, fingerprint: string, report: unknown, reaction: string | null = null) {
   const supabase = getSupabaseAdmin();
   if (!supabase || !userId) return null;
   try {
     const { data, error } = await supabase
       .from('reports')
-      .insert({ user_id: userId, report, product_key: productKey || null, prefs_fingerprint: fingerprint })
+      .insert({ user_id: userId, report, product_key: productKey || null, prefs_fingerprint: fingerprint, reaction })
       .select('id')
       .single();
     if (error) return null;
@@ -364,6 +365,12 @@ export async function POST(req: NextRequest) {
   const prefs = JSON.parse(String(form.get('preferences') || '{}'));
   const deviceId = String(form.get('deviceId') || '') || null;
   const file = form.get('image') as File | null;
+  // "Scan it fresh": the saved read is wrong or the batch is different, so
+  // ignore the cache and pay for a real look. The verdict they already gave
+  // rides along so a new score doesn't wipe their own call.
+  const force = String(form.get('force') || '') === '1';
+  const rawPrior = String(form.get('priorReaction') || '');
+  const priorReaction = (REACTION_VALUES as readonly string[]).includes(rawPrior) ? rawPrior : null;
 
   // Scope history and the scan cache to the same identity the rest of the API
   // resolves — a signed-in person's sessions live under their Supabase user id,
@@ -378,7 +385,7 @@ export async function POST(req: NextRequest) {
   if (!process.env.OPENAI_API_KEY) {
     const mockSubject = buildSearchSubject(question, '');
     const mockKey = /^unknown(?:\s+strain)?$/i.test(mockSubject) ? '' : cacheKeyFor(mockSubject);
-    const cached = mockKey ? await getCachedScan(userId, mockKey, fingerprint) : null;
+    const cached = mockKey && !force ? await getCachedScan(userId, mockKey, fingerprint) : null;
     if (cached) {
       return NextResponse.json({
         report: normalizeReport(cached.report), reportId: cached.id,
@@ -386,8 +393,8 @@ export async function POST(req: NextRequest) {
       });
     }
     const report = mockAnalyze(question, prefs);
-    const reportId = await saveScan(userId, mockKey, fingerprint, report);
-    return NextResponse.json({ report, reportId, reaction: null, mock: true, fromCache: false });
+    const reportId = await saveScan(userId, mockKey, fingerprint, report, priorReaction);
+    return NextResponse.json({ report, reportId, reaction: priorReaction, mock: true, fromCache: false });
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -550,7 +557,7 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     // behind it, has exactly one right answer — the one already stored. Serve
     // it and spend no tokens: a typed re-scan costs zero model calls, and a
     // photo re-scan costs only the one vision call needed to know what it is.
-    if (productKey) {
+    if (productKey && !force) {
       const cached = await getCachedScan(userId, productKey, fingerprint);
       if (cached) {
         return NextResponse.json({
@@ -605,9 +612,9 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     // read is deliberately not cached — it says nothing worth replaying.
     const reportId = report.confidence === 'low'
       ? null
-      : await saveScan(userId, productKey, fingerprint, report);
+      : await saveScan(userId, productKey, fingerprint, report, priorReaction);
 
-    return NextResponse.json({ report, reportId, reaction: null, mock: false, fromCache: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) });
+    return NextResponse.json({ report, reportId, reaction: priorReaction, mock: false, fromCache: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) });
   } catch (err: any) {
     const payload = toErrorPayload(err);
     console.error('Analyze API failed', {

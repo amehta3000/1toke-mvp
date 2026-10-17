@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
 import { isMissingMigration } from '@/lib/pgErrors';
-
-const REACTIONS = ['pass', 'maybe', 'good'];
+import { REACTION_VALUES } from '@/lib/types';
 
 export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin();
@@ -41,7 +40,7 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const body = await req.json();
   const id = typeof body.id === 'string' ? body.id : '';
-  const reaction = REACTIONS.includes(body.reaction) ? body.reaction : null;
+  const reaction = REACTION_VALUES.includes(body.reaction) ? body.reaction : null;
   const supabase = getSupabaseAdmin();
   if (!supabase) return NextResponse.json({ saved: false, localOnly: true });
   const userId = await resolveUserId(req, typeof body.deviceId === 'string' ? body.deviceId : null);
