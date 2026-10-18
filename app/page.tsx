@@ -75,6 +75,7 @@ export default function Page() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [needsMigration, setNeedsMigration] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [claimStuck, setClaimStuck] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -143,6 +144,13 @@ export default function Page() {
         });
         const data = await res.json().catch(() => ({}));
         if (data?.claimed) safeSet(claimedKey, '1');
+        // A half-finished claim is the one case where the journal really is
+        // elsewhere rather than missing. Say so, so the screen never implies
+        // the entries are gone while the retry is still working.
+        else if (Array.isArray(data?.incomplete)) {
+          const stuck = data.incomplete.find((f: any) => f?.table === 'sessions');
+          if (stuck) setClaimStuck(String(stuck.message || 'the move is still retrying'));
+        }
       } catch { /* claim retries on next visit */ }
     }
     setIdentity({
@@ -430,6 +438,7 @@ export default function Page() {
       sessions={sessions}
       needsMigration={needsMigration}
       sessionsError={sessionsError}
+      claimStuck={claimStuck}
       savedReports={savedReports}
       onLogged={() => loadSessions(deviceId)}
       showToast={showToast}

@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   if (!sources.length) return NextResponse.json({ claimed: true, moved: 0 });
 
   let moved = 0;
-  const failed: string[] = [];
+  const failed: { table: string; code?: string; message?: string }[] = [];
   for (const table of ['reports', 'sessions']) {
     const { data, error } = await supabase
       .from(table)
@@ -49,7 +49,11 @@ export async function POST(req: NextRequest) {
       // so returning here left the earlier table already moved to the new id
       // and the later one stranded under the old one — scans that follow you
       // into the account and a journal that silently doesn't.
-      failed.push(table);
+      // Hand the real Postgres error back. The caller owns every row being
+      // moved, and without it a half-moved account is only diagnosable by
+      // opening the SQL editor — which is not something to ask of someone
+      // staring at a journal that looks erased.
+      failed.push({ table, code: error.code, message: error.message });
       continue;
     }
     moved += data?.length || 0;
