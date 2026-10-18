@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
   if (!sources.length) return NextResponse.json({ claimed: true, moved: 0 });
 
   let moved = 0;
+  const failed: string[] = [];
   for (const table of ['reports', 'sessions']) {
     const { data, error } = await supabase
       .from(table)
@@ -44,10 +45,20 @@ export async function POST(req: NextRequest) {
       .select('id');
     if (error) {
       if (error.code === '42P01') continue; // sessions table not migrated yet
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      // Keep going rather than bailing. These updates are separate statements,
+      // so returning here left the earlier table already moved to the new id
+      // and the later one stranded under the old one — scans that follow you
+      // into the account and a journal that silently doesn't.
+      failed.push(table);
+      continue;
     }
     moved += data?.length || 0;
   }
+
+  // A partial move is not a claim. Reporting it as one lets the client set its
+  // "already claimed" flag and never try again, which is how the split becomes
+  // permanent. Saying so leaves the flag unset, so the next visit retries.
+  if (failed.length) return NextResponse.json({ claimed: false, moved, incomplete: failed });
 
   return NextResponse.json({ claimed: true, moved });
 }

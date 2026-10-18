@@ -9,20 +9,30 @@ export async function GET(req: NextRequest) {
   const userId = await resolveUserId(req, req.nextUrl.searchParams.get('deviceId'));
   if (!userId) return NextResponse.json({ sessions: [] });
 
-  const { data, error } = await supabase
+  const rows = (columns: string) => supabase
     .from('sessions')
-    .select('*, reports(report)')
+    .select(columns)
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(100);
 
-  if (error) {
-    if (isMissingMigration(error)) {
-      return NextResponse.json({ sessions: [], needsMigration: true });
-    }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const { data, error } = await rows('*, reports(report)');
+  if (!error) return NextResponse.json({ sessions: data });
+  if (isMissingMigration(error)) {
+    return NextResponse.json({ sessions: [], needsMigration: true });
   }
-  return NextResponse.json({ sessions: data });
+
+  // The embed needs the sessions.report_id -> reports.id foreign key. On a
+  // database where that constraint never got created the join fails outright
+  // and used to take the whole journal with it — rows the person definitely
+  // has, rendered as "Nothing logged yet". Every field the timeline shows
+  // lives on the session row itself, so dropping the join costs almost
+  // nothing next to losing the list.
+  const plain = await rows('*');
+  if (!plain.error) {
+    return NextResponse.json({ sessions: plain.data, degraded: 'no-report-join' });
+  }
+  return NextResponse.json({ error: plain.error.message }, { status: 500 });
 }
 
 function sessionFields(body: any) {
