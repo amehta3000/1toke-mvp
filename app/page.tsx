@@ -74,6 +74,8 @@ export default function Page() {
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
   const [needsMigration, setNeedsMigration] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [claimStuck, setClaimStuck] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -99,10 +101,19 @@ export default function Page() {
     try {
       const res = await authFetch(`/api/sessions?deviceId=${encodeURIComponent(id)}`);
       const data = await res.json().catch(() => ({}));
-      setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+      // A failed read and an empty journal used to be indistinguishable on
+      // screen — both drew "Nothing logged yet", which reads as data loss to
+      // anyone who knows they logged something. Keep them apart.
+      if (Array.isArray(data.sessions)) {
+        setSessions(data.sessions);
+        setSessionsError(null);
+      } else {
+        setSessions([]);
+        setSessionsError(typeof data.error === 'string' ? data.error : `Couldn't load your journal (${res.status}).`);
+      }
       setNeedsMigration(Boolean(data.needsMigration));
     } catch {
-      // Offline or DB unavailable: keep whatever we have.
+      setSessionsError('Network hiccup — your journal didn’t load.');
     }
   }
 
@@ -133,6 +144,13 @@ export default function Page() {
         });
         const data = await res.json().catch(() => ({}));
         if (data?.claimed) safeSet(claimedKey, '1');
+        // A half-finished claim is the one case where the journal really is
+        // elsewhere rather than missing. Say so, so the screen never implies
+        // the entries are gone while the retry is still working.
+        else if (Array.isArray(data?.incomplete)) {
+          const stuck = data.incomplete.find((f: any) => f?.table === 'sessions');
+          if (stuck) setClaimStuck(String(stuck.message || 'the move is still retrying'));
+        }
       } catch { /* claim retries on next visit */ }
     }
     setIdentity({
@@ -419,6 +437,8 @@ export default function Page() {
       deviceId={deviceId}
       sessions={sessions}
       needsMigration={needsMigration}
+      sessionsError={sessionsError}
+      claimStuck={claimStuck}
       savedReports={savedReports}
       onLogged={() => loadSessions(deviceId)}
       showToast={showToast}

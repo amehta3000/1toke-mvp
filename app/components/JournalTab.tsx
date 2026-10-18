@@ -110,10 +110,12 @@ function SessionRow({ session, onEdit }: { session: any; onEdit: () => void }) {
   </div>;
 }
 
-export default function JournalTab({ deviceId, sessions, needsMigration, savedReports, onLogged, showToast, showAccountNudge, onAccountNudge }: {
+export default function JournalTab({ deviceId, sessions, needsMigration, sessionsError, claimStuck, savedReports, onLogged, showToast, showAccountNudge, onAccountNudge }: {
   deviceId: string;
   sessions: any[];
   needsMigration: boolean;
+  sessionsError?: string | null;
+  claimStuck?: string | null;
   savedReports: SavedReport[];
   onLogged: () => Promise<void>;
   showToast: (msg: string) => void;
@@ -309,7 +311,9 @@ export default function JournalTab({ deviceId, sessions, needsMigration, savedRe
       </div>
       {needsMigration && <p className="small banner">⚠️ One-time setup: run the updated <b>supabase-schema.sql</b> in your Supabase SQL editor to store sessions.</p>}
       {showAccountNudge && <button className="banner nudge small" onClick={onAccountNudge}>🔐 This journal lives only on this device. Tap to add your email so it follows you anywhere.</button>}
-      {sessions.length === 0 && !needsMigration && <p>Nothing logged yet. Flower, vape, gummy, whatever — after your next session, come back and tap it in. This is literally how I get smarter about you.</p>}
+      {claimStuck && <p className="small banner">⏳ Still moving your journal into this account — your entries are safe, just not here yet. Reload in a moment. <span className="small">({claimStuck})</span></p>}
+      {sessionsError && <p className="small banner">⚠️ Couldn’t load your journal, so this list may be incomplete. Nothing was deleted — pull down to refresh, or try again in a minute. <span className="small">({sessionsError})</span></p>}
+      {sessions.length === 0 && !needsMigration && !sessionsError && !claimStuck && <p>Nothing logged yet. Flower, vape, gummy, whatever — after your next session, come back and tap it in. This is literally how I get smarter about you.</p>}
       {sessions.length > 0 && <div className="session-list">
         {sessions.map(s => <SessionRow key={s.id} session={s} onEdit={() => openEdit(s)} />)}
       </div>}
