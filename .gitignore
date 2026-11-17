@@ -18,3 +18,4 @@ pnpm-debug.log*
 # OS/editor artifacts
 .DS_Store
 *.swp
+*.tsbuildinfo
