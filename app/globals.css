@@ -382,3 +382,39 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   align-items: center; gap: 10px; padding: 10px 2px;
 }
 .scan-row + .scan-row { border-top: 1px solid var(--line); }
+
+/* Real scan progress. The identified product name rises into the overlay the
+   moment the server recognises the label; the button line swaps per stage. */
+.scan-found {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  max-width: 86%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 6px 12px; border-radius: 999px;
+  background: rgba(10,12,16,.78); border: 1px solid rgba(215,255,85,.45);
+  color: var(--accent); font-weight: 800; font-size: 13px;
+}
+.busy-line { display: inline-block; }
+@media (prefers-reduced-motion: no-preference) {
+  .scan-found { animation: foundIn .42s cubic-bezier(.34,1.56,.64,1) both; }
+  .busy-line { animation: lineIn .28s ease both; }
+}
+@keyframes foundIn { from { opacity: 0; transform: translate(-50%, 10px) scale(.92); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+@keyframes lineIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* Verdict reveal: card rises in, ring and number count up (driven from JS),
+   then the word springs in and the one-liner follows. */
+.score span { font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-card { animation: rise .28s ease both; }
+  .verdict-core.is-counting .verdict-word,
+  .verdict-core.is-counting .verdict-quicktake { opacity: 0; }
+  .verdict-core.is-landed .verdict-word { animation: wordLand .5s cubic-bezier(.34,1.56,.64,1) both; }
+  .verdict-core.is-landed .verdict-quicktake { animation: rise .35s ease .12s both; }
+  .verdict-core.is-landed .score { animation: ringSettle .45s cubic-bezier(.34,1.56,.64,1); }
+}
+@keyframes wordLand {
+  0% { opacity: 0; transform: translateY(14px) scale(.7); letter-spacing: .04em; }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: none; letter-spacing: -0.03em; }
+}
+@keyframes ringSettle { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }
+.report-anchor { scroll-margin-top: 12px; }

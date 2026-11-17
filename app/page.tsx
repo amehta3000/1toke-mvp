@@ -8,6 +8,7 @@ import { getDeviceId, safeGet, safeSet } from '@/lib/storage';
 import { getSupabaseBrowser, authFetch } from '@/lib/supabaseBrowser';
 import { trackEvent } from '@/lib/analytics';
 import { tapLight, tapConfirm } from '@/lib/haptics';
+import { shrinkImage } from '@/lib/image';
 import Onboarding from './components/Onboarding';
 import { ReportCard, LowConfidenceCard } from './components/ReportCard';
 import JournalTab from './components/JournalTab';
@@ -22,13 +23,58 @@ const claimedKey = '1toke:claimed';
 
 type IdentityInfo = { configured: boolean; isAnonymous: boolean; email: string | null };
 
+// Shown only until the server reports its first real stage.
 const loadingLines = [
   'Reading the label…',
   'Sniffing the terps…',
-  'Cross-checking your vibe…',
-  'Consulting the budtender brain…',
-  'Scoring the match…'
+  'Cross-checking your vibe…'
 ];
+
+// Real progress from the streamed analyze response. Each line describes what
+// is actually happening right now, not a timer.
+type Stage = { stage: 'reading' | 'identified' | 'researching' | 'scoring'; name?: string };
+function stageLine(s: Stage, identifiedName: string): string {
+  switch (s.stage) {
+    case 'reading': return 'Reading the label…';
+    case 'identified': return `Found it: ${s.name}`;
+    case 'researching': return identifiedName ? `Pulling the terps on ${identifiedName}…` : 'Pulling the terps…';
+    case 'scoring': return identifiedName ? `Scoring ${identifiedName} against your vibe…` : 'Scoring it against your vibe…';
+  }
+}
+
+// Read the NDJSON stream from /api/analyze, reporting stages as they arrive
+// and resolving with the final result line. Falls back to plain JSON if
+// something in between (an error page, an old deployment) didn't stream.
+async function readAnalyze(res: Response, onStage: (s: Stage) => void): Promise<{ status: number; body: any }> {
+  const type = res.headers.get('content-type') || '';
+  if (!type.includes('ndjson') || !res.body) {
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: { status: number; body: any } | null = null;
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    try {
+      const event = JSON.parse(line);
+      if (event.type === 'stage') onStage(event as Stage);
+      else if (event.type === 'result') result = { status: Number(event.status) || 500, body: event.body || {} };
+    } catch { /* ignore a malformed line */ }
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      handle(buffer.slice(0, nl));
+      buffer = buffer.slice(nl + 1);
+    }
+  }
+  handle(buffer);
+  return result || { status: 502, body: { error: { message: 'The scan was cut off. Please try again.', code: 'stream_incomplete' } } };
+}
 
 const navItems = [
   { id: 'scan', label: 'Scan', icon: '🔍' },
@@ -69,6 +115,19 @@ export default function Page() {
   const [analyzeError, setAnalyzeError] = useState<{ message: string; details?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingLine, setLoadingLine] = useState(0);
+  const [stage, setStage] = useState<Stage | null>(null);
+  const [identifiedName, setIdentifiedName] = useState('');
+  // The photo starts shrinking the moment it's picked, so by the time the
+  // button is tapped the small version is usually already waiting.
+  const shrinking = useRef<Promise<File> | null>(null);
+  // With a photo attached the verdict lands below the fold on a phone, so the
+  // reveal would play where nobody can see it. Bring it into view on arrival.
+  const reportRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!report || !reportRef.current) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    reportRef.current.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  }, [report]);
   const [deviceId, setDeviceId] = useState('');
   const [identity, setIdentity] = useState<IdentityInfo>({ configured: false, isAnonymous: true, email: null });
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
@@ -203,10 +262,12 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    if (!busy) { setLoadingLine(0); return; }
+    if (!busy || stage) { setLoadingLine(0); return; }
     const timer = setInterval(() => setLoadingLine(i => (i + 1) % loadingLines.length), 1700);
     return () => clearInterval(timer);
-  }, [busy]);
+  }, [busy, stage]);
+
+  const busyLine = stage ? stageLine(stage, identifiedName) : loadingLines[loadingLine];
 
   function finishOnboarding() {
     safeSet(onboardedKey, '1');
@@ -218,6 +279,7 @@ export default function Page() {
     if (preview) URL.revokeObjectURL(preview);
     setImage(file);
     setPreview(file ? URL.createObjectURL(file) : null);
+    shrinking.current = file ? shrinkImage(file) : null;
   }
 
   // "Done with it": wipe the card and reset the scan inputs for the next product.
@@ -244,6 +306,8 @@ export default function Page() {
     setScannedAt(null);
     setEvidence([]);
     setAnalyzeError(null);
+    setStage(null);
+    setIdentifiedName('');
 
     try {
       const form = new FormData();
@@ -254,12 +318,19 @@ export default function Page() {
         form.set('force', '1');
         if (reaction) form.set('priorReaction', reaction);
       }
-      if (image) form.set('image', image);
+      if (image) form.set('image', (await shrinking.current?.catch(() => image)) || image);
 
-      const res = await authFetch('/api/analyze', { method: 'POST', body: form });
-      const data = await res.json().catch(() => ({}));
+      const res = await authFetch('/api/analyze', {
+        method: 'POST',
+        body: form,
+        headers: { accept: 'application/x-ndjson' }
+      });
+      const { status, body: data } = await readAnalyze(res, s => {
+        if (s.stage === 'identified' && s.name) setIdentifiedName(s.name);
+        setStage(s);
+      });
 
-      if (!res.ok) {
+      if (status < 200 || status >= 300) {
         const message = data?.error?.message || 'Analysis failed. Please try again.';
         const details = [
           data?.error?.code ? `code=${data.error.code}` : '',
@@ -267,7 +338,7 @@ export default function Page() {
           data?.error?.hint ? data.error.hint : ''
         ].filter(Boolean).join(' | ');
         setAnalyzeError({ message, details });
-        trackEvent('scan_failed', { reason: String(data?.error?.code || res.status) });
+        trackEvent('scan_failed', { reason: String(data?.error?.code || status) });
         return;
       }
 
@@ -317,6 +388,7 @@ export default function Page() {
       trackEvent('scan_failed', { reason: 'network' });
     } finally {
       setBusy(false);
+      setStage(null);
     }
   }
 
@@ -407,6 +479,7 @@ export default function Page() {
           {busy && <div className="scan-overlay" aria-hidden="true">
             <div className="scan-line" />
             <div className="scan-badge">🌿</div>
+            {identifiedName && <div className="scan-found" key={identifiedName}>{identifiedName}</div>}
           </div>}
           {!busy && <button className="clear" onClick={() => onImage(null)} aria-label="Remove image">✕</button>}
         </div>}
@@ -414,7 +487,7 @@ export default function Page() {
           <textarea value={question} onChange={e => setQuestion(e.target.value)} placeholder="Example: CBX L'Orange 29% THC. Good for creative daytime vibes?" />
         </label>
         <button className="primary" onClick={() => analyze()} disabled={busy || (!question.trim() && !image)}>
-          {busy ? loadingLines[loadingLine] : 'Get the verdict'}
+          {busy ? <span className="busy-line" key={busyLine} aria-live="polite">{busyLine}</span> : 'Get the verdict'}
         </button>
         {analyzeError && <div className="card stack" role="alert" aria-live="polite">
           <div className="kicker">Could not complete analysis</div>
@@ -426,9 +499,11 @@ export default function Page() {
         </div>}
       </div>
 
-      {report && (report.confidence === 'low'
-        ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
-        : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} scannedAt={scannedAt} evidence={evidence} onRescan={() => analyze({ force: true })} onDismiss={clearReport} />)}
+      {report && <div ref={reportRef} className="report-anchor">
+        {report.confidence === 'low'
+          ? <LowConfidenceCard report={report} searchAttempted={searchAttempted} searchTerm={searchTerm} onDismiss={clearReport} />
+          : <ReportCard report={report} reaction={reaction} onReact={react} reacting={reacting} fromCache={fromCache} scannedAt={scannedAt} evidence={evidence} onRescan={() => analyze({ force: true })} onDismiss={clearReport} />}
+      </div>}
 
       {!report && <InstallPrompt />}
     </div>}
