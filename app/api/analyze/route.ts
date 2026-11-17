@@ -6,6 +6,7 @@ import { normalizeReport, toDisplayText } from '@/lib/report';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
 import { REACTION_VALUES } from '@/lib/types';
+import { checkScanLimit, clientIp, recordScan } from '@/lib/rateLimit';
 
 export const runtime = 'nodejs';
 
@@ -183,8 +184,9 @@ async function saveScan(userId: string | null, productKey: string, fingerprint: 
   }
 }
 
-// One attempt at Tavily. Advanced depth + raw content because terpene
-// percentages live in page tables that the short `content` snippet truncates.
+// One attempt at Tavily. Raw content because terpene percentages live in page
+// tables that the short `content` snippet truncates — that, not "advanced"
+// depth, is what recovers them. Basic depth returns in a fraction of the time.
 async function searchOnce(query: string, apiKey: string, timeoutMs: number): Promise<string | null> {
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
@@ -193,7 +195,7 @@ async function searchOnce(query: string, apiKey: string, timeoutMs: number): Pro
       api_key: apiKey,
       query: query.slice(0, 380),
       max_results: 5,
-      search_depth: 'advanced',
+      search_depth: 'basic',
       include_answer: true,
       include_raw_content: true
     }),
@@ -216,22 +218,20 @@ async function searchOnce(query: string, apiKey: string, timeoutMs: number): Pro
   return combined || null;
 }
 
-// The old version used a 5s timeout and swallowed every failure, so a slow
-// search silently produced a terpene-less report and a lower score with no
-// signal that anything went wrong. Advanced searches routinely exceed 5s.
+// A single bounded attempt. The previous advanced-depth search with a 12s
+// timeout and a retry could hold a scan for 24s on a cache miss — someone
+// standing at a counter won't wait that long. A miss here is not silent: the
+// model falls back to the labelled TYPICAL tier, and the 30-day facts cache
+// means each product only pays this once.
 async function searchWeb(query: string): Promise<string | null> {
   const apiKey = process.env.TAVILY_API_KEY;
   if (!apiKey) return null;
-
-  for (const timeoutMs of [12000, 12000]) {
-    try {
-      const result = await searchOnce(query, apiKey, timeoutMs);
-      if (result) return result;
-    } catch (err) {
-      console.warn('Tavily search attempt failed', { query: query.slice(0, 80), err: String(err) });
-    }
+  try {
+    return await searchOnce(query, apiKey, 8000);
+  } catch (err) {
+    console.warn('Tavily search attempt failed', { query: query.slice(0, 80), err: String(err) });
+    return null;
   }
-  return null;
 }
 
 function buildSearchSubject(question: string, strainName: string): string {
@@ -368,8 +368,49 @@ function toErrorPayload(err: any) {
   };
 }
 
+type Emit = (event: Record<string, unknown>) => void;
+type Outcome = { status: number; body: Record<string, unknown> };
+
+// Two response shapes from one pipeline. A client that asks for NDJSON gets
+// each real stage as it happens ("identified: L'Orange · CBX", "scoring") and
+// then the result as the final line — so the screen shows actual progress
+// instead of rotating filler copy. Anyone else gets the plain JSON as before.
 export async function POST(req: NextRequest) {
   const form = await req.formData();
+  const wantsStream = (req.headers.get('accept') || '').includes('application/x-ndjson');
+
+  if (!wantsStream) {
+    const { status, body } = await runAnalyze(req, form, () => {});
+    return NextResponse.json(body, { status });
+  }
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send: Emit = event => {
+        try { controller.enqueue(encoder.encode(JSON.stringify(event) + '\n')); } catch { /* client went away */ }
+      };
+      try {
+        const outcome = await runAnalyze(req, form, send);
+        send({ type: 'result', status: outcome.status, body: outcome.body });
+      } catch (err) {
+        console.error('Analyze stream failed', { err: String(err) });
+        send({ type: 'result', status: 500, body: { error: { message: 'Could not analyze right now. Please try again in a minute.', code: 'stream_failed' } } });
+      } finally {
+        controller.close();
+      }
+    }
+  });
+  return new Response(stream, {
+    headers: {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store, no-transform',
+      'x-accel-buffering': 'no'
+    }
+  });
+}
+
+async function runAnalyze(req: NextRequest, form: FormData, emit: Emit): Promise<Outcome> {
   const question = String(form.get('question') || '');
   const prefs = JSON.parse(String(form.get('preferences') || '{}'));
   const deviceId = String(form.get('deviceId') || '') || null;
@@ -386,24 +427,36 @@ export async function POST(req: NextRequest) {
   // not the legacy device id, so keying off deviceId alone silently lost their
   // journal once they added an email.
   const userId = await resolveUserId(req, deviceId);
-  const historyDigest = await buildHistoryDigest(userId);
-  const fingerprint = prefsFingerprint(prefs, historyDigest);
 
   // Mock mode still stores and caches when a database is configured, so the
   // scan history and verdict buttons are exercisable locally without keys.
   if (!process.env.OPENAI_API_KEY) {
+    const historyDigest = await buildHistoryDigest(userId);
+    const fingerprint = prefsFingerprint(prefs, historyDigest);
     const mockSubject = buildSearchSubject(question, '');
     const mockKey = /^unknown(?:\s+strain)?$/i.test(mockSubject) ? '' : cacheKeyFor(mockSubject);
+    if (mockKey) emit({ type: 'stage', stage: 'identified', name: mockSubject });
     const cached = mockKey && !force ? await getCachedScan(userId, mockKey, fingerprint) : null;
     if (cached) {
-      return NextResponse.json({
+      return { status: 200, body: {
         report: normalizeReport(cached.report), reportId: cached.id,
         reaction: cached.reaction || null, scannedAt: cached.created_at || null, mock: true, fromCache: true
-      });
+      } };
     }
+    emit({ type: 'stage', stage: 'scoring' });
     const report = mockAnalyze(question, prefs);
     const reportId = await saveScan(userId, mockKey, fingerprint, report, priorReaction);
-    return NextResponse.json({ report, reportId, reaction: priorReaction, mock: true, fromCache: false });
+    return { status: 200, body: { report, reportId, reaction: priorReaction, mock: true, fromCache: false } };
+  }
+
+  // Checked before any paid call is made.
+  const ip = clientIp(req);
+  const limit = await checkScanLimit(userId, ip);
+  if (!limit.ok) {
+    return { status: 429, body: { error: {
+      message: `That’s a lot of scans ${limit.retryLabel === 'today' ? 'for one day' : 'in a few minutes'} — take a breather and try again ${limit.retryLabel === 'today' ? 'tomorrow' : 'shortly'}.`,
+      code: 'rate_limited'
+    } } };
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -411,8 +464,24 @@ export async function POST(req: NextRequest) {
   let imageDataUrl: string | null = null;
   if (file && file.size > 0) {
     const bytes = Buffer.from(await file.arrayBuffer());
-    imageDataUrl = `data:${file.type};base64,${bytes.toString('base64')}`;
+    imageDataUrl = `data:${file.type || 'image/jpeg'};base64,${bytes.toString('base64')}`;
   }
+  const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+  if (imageDataUrl) emit({ type: 'stage', stage: 'reading' });
+
+  // The journal lookup and reading the label don't depend on each other, so
+  // they run side by side instead of one after the other.
+  let historyDigest: string | null;
+  let identified = '';
+  try {
+    [historyDigest, identified] = await Promise.all([
+      buildHistoryDigest(userId),
+      imageDataUrl ? identifyFromImage(client, model, imageDataUrl, question) : Promise.resolve('')
+    ]);
+  } catch {
+    historyDigest = null;
+  }
+  const fingerprint = prefsFingerprint(prefs, historyDigest);
 
   const system = `You are 1Toke: a sharp, honest budtender friend helping an adult make a fast in-store buying decision. You hype products that genuinely fit this person and you are blunt when something is wrong for them. Never provide medical claims. Return ONLY valid JSON.
 
@@ -541,7 +610,6 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
   });
 
   try {
-    const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
     let searchAttempted = false;
     let searchTerm = '';
     let searchLabel = '';
@@ -552,15 +620,13 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     // to report low confidence, so identical input could take two different
     // paths and produce very different scores and terpene data.
     let searchSubject = buildSearchSubject(question, '');
-    if (imageDataUrl) {
-      const identified = await identifyFromImage(client, model, imageDataUrl, question);
-      if (identified) searchSubject = identified;
-    }
+    if (identified) searchSubject = identified;
 
     let searchContext: string | null = null;
     let searchCached = false;
     const hasSubject = Boolean(searchSubject) && !/^unknown(?:\s+strain)?$/i.test(searchSubject);
     const productKey = hasSubject ? cacheKeyFor(searchSubject) : '';
+    if (hasSubject) emit({ type: 'stage', stage: 'identified', name: searchSubject });
 
     // Scanning the same jar again, with the same profile and the same journal
     // behind it, has exactly one right answer — the one already stored. Serve
@@ -569,7 +635,7 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     if (productKey && !force) {
       const cached = await getCachedScan(userId, productKey, fingerprint);
       if (cached) {
-        return NextResponse.json({
+        return { status: 200, body: {
           report: normalizeReport(cached.report),
           reportId: cached.id,
           reaction: cached.reaction || null,
@@ -582,9 +648,12 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
           searchFound: false,
           searchCached: false,
           usedHistory: Boolean(historyDigest)
-        });
+        } };
       }
     }
+
+    // From here on this is a fresh, paid scan — count it.
+    await recordScan(userId, ip);
 
     if (hasSubject) {
       searchLabel = searchSubject;
@@ -595,12 +664,14 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
       searchCached = Boolean(searchContext);
 
       if (!searchContext && process.env.TAVILY_API_KEY) {
+        emit({ type: 'stage', stage: 'researching' });
         searchContext = await searchWeb(searchTerm);
         if (searchContext) await putCachedFacts(productKey, searchSubject, searchContext);
       }
       searchFound = Boolean(searchContext);
     }
 
+    emit({ type: 'stage', stage: 'scoring' });
     const raw = await analyzeWithModel(client, input, model, searchContext || undefined);
     let parsed: unknown = {};
     try {
@@ -623,7 +694,7 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
       ? null
       : await saveScan(userId, productKey, fingerprint, report, priorReaction);
 
-    return NextResponse.json({ report, reportId, reaction: priorReaction, mock: false, fromCache: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) });
+    return { status: 200, body: { report, reportId, reaction: priorReaction, mock: false, fromCache: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) } };
   } catch (err: any) {
     const payload = toErrorPayload(err);
     console.error('Analyze API failed', {
@@ -632,6 +703,6 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
       requestId: payload.error.requestId,
       hint: payload.error.hint
     });
-    return NextResponse.json({ error: payload.error }, { status: payload.status });
+    return { status: payload.status, body: { error: payload.error } };
   }
 }

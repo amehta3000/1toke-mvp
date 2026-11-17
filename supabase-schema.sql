@@ -67,6 +67,18 @@ create table if not exists product_facts (
   created_at timestamptz not null default now()
 );
 
+-- One row per fresh (non-cached) scan, used only to rate-limit the analyze
+-- endpoint per identity and per network. ip is a salted hash, never the raw
+-- address. Rows older than two days are pruned by the app.
+create table if not exists scan_events (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  user_key text null,
+  ip text not null
+);
+create index if not exists scan_events_user_idx on scan_events (user_key, created_at desc);
+create index if not exists scan_events_ip_idx on scan_events (ip, created_at desc);
+
 -- The app reads/writes only through server routes using the service role
 -- (which bypasses RLS). Enabling RLS with no public policies blocks anyone
 -- from querying these tables directly with the public anon key.
@@ -74,3 +86,4 @@ alter table reports enable row level security;
 alter table sessions enable row level security;
 alter table user_preferences enable row level security;
 alter table product_facts enable row level security;
+alter table scan_events enable row level security;

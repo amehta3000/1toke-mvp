@@ -1,8 +1,44 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Reaction, StrainReport } from '@/lib/types';
 import { terpeneNote } from '@/lib/terpenes';
+import { tapConfirm } from '@/lib/haptics';
+
+// The verdict is the moment people come for, so it arrives in order: the ring
+// fills and the number counts up, then the word lands, then the one-liner.
+// Reduced-motion users get the final state immediately.
+const COUNT_MS = 650;
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+}
+
+function useCountUp(target: number, key: string): { value: number; landed: boolean } {
+  // Start at 0 (not the target) so the first paint doesn't flash the final
+  // number before the count begins.
+  const [value, setValue] = useState(() => prefersReducedMotion() ? target : 0);
+  const [landed, setLanded] = useState(() => prefersReducedMotion());
+  useEffect(() => {
+    if (prefersReducedMotion()) { setValue(target); setLanded(true); return; }
+    setValue(0);
+    setLanded(false);
+    let frame = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / COUNT_MS);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setValue(Math.round(target * eased));
+      if (t < 1) frame = requestAnimationFrame(tick);
+      else { setLanded(true); tapConfirm(); }
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+    // Re-run only for a new verdict, not on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return { value, landed };
+}
 
 const decisionMeta: Record<StrainReport['buyDecision'], { colorVar: string; pulse: boolean }> = {
   Buy: { colorVar: 'var(--accent)', pulse: true },
@@ -67,12 +103,16 @@ export function ReportCard({ report, reaction, onReact, reacting, fromCache, sca
   const [expanded, setExpanded] = useState(false);
   const [activeTerp, setActiveTerp] = useState<string | null>(null);
   const meta = decisionMeta[report.buyDecision];
+  const revealKey = `${report.strainName}|${report.matchScore}|${report.buyDecision}|${scannedAt || ''}`;
+  const { value: shownScore, landed } = useCountUp(report.matchScore, revealKey);
 
-  return <div className="card stack">
-    <div className={`verdict-core ${meta.pulse ? 'pulse' : ''}`}>
+  return <div className="card stack reveal-card">
+    <div className={`verdict-core ${meta.pulse && landed ? 'pulse' : ''} ${landed ? 'is-landed' : 'is-counting'}`}>
       {report.strainName && report.strainName !== 'Unknown strain' && report.strainName !== 'Unknown' &&
         <p className="small scanned-name">{report.strainName}</p>}
-      <div className="score" style={{ '--score': report.matchScore, '--ring': meta.colorVar } as any}><span>{report.matchScore}</span></div>
+      <div className="score" style={{ '--score': shownScore, '--ring': meta.colorVar } as any}>
+        <span aria-label={`Match score ${report.matchScore}`}>{shownScore}</span>
+      </div>
       <div className="verdict-word" style={{ color: meta.colorVar }}>{report.buyDecision}</div>
       <p className="verdict-quicktake"><b>{report.quickTake}</b></p>
     </div>
