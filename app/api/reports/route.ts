@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { recomputeTaste } from '@/lib/taste';
 import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
 import { isMissingMigration } from '@/lib/pgErrors';
@@ -58,5 +59,7 @@ export async function PATCH(req: NextRequest) {
     if (isMissingMigration(error)) return NextResponse.json({ saved: false, needsMigration: true });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+  // A Want it / Pass is a (weaker) taste signal too.
+  after(() => recomputeTaste(userId));
   return NextResponse.json({ saved: true, report: data });
 }

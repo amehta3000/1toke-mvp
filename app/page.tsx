@@ -50,30 +50,40 @@ async function readAnalyze(res: Response, onStage: (s: Stage) => void): Promise<
   if (!type.includes('ndjson') || !res.body) {
     return { status: res.status, body: await res.json().catch(() => ({})) };
   }
+  // Resolves the moment the result line arrives. The server may keep the
+  // stream open briefly afterwards to file the scan in the catalog; the rest
+  // is drained in the background so the verdict never waits on that.
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
-  let result: { status: number; body: any } | null = null;
-  const handle = (line: string) => {
-    if (!line.trim()) return;
-    try {
-      const event = JSON.parse(line);
-      if (event.type === 'stage') onStage(event as Stage);
-      else if (event.type === 'result') result = { status: Number(event.status) || 500, body: event.body || {} };
-    } catch { /* ignore a malformed line */ }
-  };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) >= 0) {
-      handle(buffer.slice(0, nl));
-      buffer = buffer.slice(nl + 1);
-    }
-  }
-  handle(buffer);
-  return result || { status: 502, body: { error: { message: 'The scan was cut off. Please try again.', code: 'stream_incomplete' } } };
+  return new Promise(resolve => {
+    let buffer = '';
+    let settled = false;
+    const finish = (r: { status: number; body: any }) => { if (!settled) { settled = true; resolve(r); } };
+    const handle = (line: string) => {
+      if (!line.trim()) return;
+      try {
+        const event = JSON.parse(line);
+        if (event.type === 'stage') onStage(event as Stage);
+        else if (event.type === 'result') finish({ status: Number(event.status) || 500, body: event.body || {} });
+      } catch { /* ignore a malformed line */ }
+    };
+    (async () => {
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buffer.indexOf('\n')) >= 0) {
+            handle(buffer.slice(0, nl));
+            buffer = buffer.slice(nl + 1);
+          }
+        }
+        handle(buffer);
+      } catch { /* connection dropped */ }
+      finish({ status: 502, body: { error: { message: 'The scan was cut off. Please try again.', code: 'stream_incomplete' } } });
+    })();
+  });
 }
 
 const navItems = [

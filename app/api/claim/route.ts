@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { recomputeTaste } from '@/lib/taste';
 import { getSupabaseAdmin } from '@/lib/supabase';
 
 // Reassign journal data to the calling (verified) user. Two sources:
@@ -64,5 +65,8 @@ export async function POST(req: NextRequest) {
   // permanent. Saying so leaves the flag unset, so the next visit retries.
   if (failed.length) return NextResponse.json({ claimed: false, moved, incomplete: failed });
 
+  // Scans and journal entries just moved onto this account; its taste must
+  // be rebuilt from them, or it would keep the empty profile it started with.
+  if (moved) after(() => recomputeTaste(newId));
   return NextResponse.json({ claimed: true, moved });
 }
