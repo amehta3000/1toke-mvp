@@ -29,6 +29,9 @@ create table if not exists user_preferences (
   preferences jsonb not null,
   updated_at timestamptz not null default now()
 );
+-- One profile per person, so the app can upsert it. (The table predates
+-- anything writing to it, so there are no duplicates to collide with.)
+create unique index if not exists user_preferences_user_idx on user_preferences (user_id);
 
 -- Session logs: "how it actually went", logged after the fact.
 -- A session can reference a saved report (the product you bought) or stand

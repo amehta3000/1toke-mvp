@@ -8,11 +8,13 @@ import { resolveUserId } from '@/lib/serverAuth';
 import { REACTION_VALUES } from '@/lib/types';
 import { checkScanLimit, clientIp, recordScan } from '@/lib/rateLimit';
 import {
+  strainSlug,
   addAliases, addObservation, loadProfile, lookupProductByAlias, parseCannabinoids, parseTerpenes,
   profileAsContext, profileIsSolid, resolveProduct, type ObservationSource
 } from '@/lib/catalog';
 import { loadTaste, tasteHash, tasteSummary, type Taste } from '@/lib/taste';
 import { SHADOW_SCORER_VERSION, shadowScore } from '@/lib/scorer';
+import { describePrefs } from '@/lib/prefsPrompt';
 
 export const runtime = 'nodejs';
 
@@ -51,41 +53,64 @@ function scrubHallucinations(report: any): any {
 // profile as L'Orange, which you rated 5/5". The long-term learning lives in
 // the structured taste profile (lib/taste.ts), not in this list — so it's
 // kept short, and it no longer feeds the cache key.
-async function buildHistoryDigest(userId: string | null): Promise<string | null> {
-  if (!userId) return null;
-  const supabase = getSupabaseAdmin();
-  if (!supabase) return null;
+type HistoryRow = any;
 
+// The journal rows the verdict can draw on. Fetched alongside reading the
+// label (it doesn't depend on it) and formatted once we know what's being
+// scanned, so past sessions of THIS product can be pulled out even when they
+// are older than the most recent few.
+async function fetchHistory(userId: string | null): Promise<HistoryRow[]> {
+  if (!userId) return [];
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return [];
   try {
     const { data, error } = await supabase
       .from('sessions')
       .select('created_at, strain_name, rating, feelings, notes, would_buy_again, reports(report)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
-      .limit(5);
-    if (error || !data?.length) return null;
-
-    const lines = data.map((s: any) => {
-      const rep = s.reports?.report || {};
-      const details = [
-        toDisplayText(rep.terpenes, ''),
-        toDisplayText(rep.cannabinoids, '')
-      ].filter(Boolean).join('; ');
-      const parts = [
-        s.strain_name || toDisplayText(rep.strainName, 'Unknown strain'),
-        details ? `(${details})` : '',
-        s.rating ? `rated ${s.rating}/5` : '',
-        Array.isArray(s.feelings) && s.feelings.length ? `felt: ${s.feelings.join(', ')}` : '',
-        s.would_buy_again === true ? 'would buy again' : s.would_buy_again === false ? 'would NOT buy again' : '',
-        s.notes ? `notes: "${String(s.notes).slice(0, 140)}"` : ''
-      ].filter(Boolean);
-      return `- ${parts.join(' — ')}`;
-    });
-
-    return lines.join('\n');
+      .limit(60);
+    return error || !data ? [] : data;
   } catch {
-    return null; // History is a bonus, never a blocker.
+    return [];
   }
+}
+
+function historyLine(s: HistoryRow): string {
+  const rep = s.reports?.report || {};
+  const details = [toDisplayText(rep.terpenes, ''), toDisplayText(rep.cannabinoids, '')].filter(Boolean).join('; ');
+  const parts = [
+    s.strain_name || toDisplayText(rep.strainName, 'Unknown strain'),
+    details ? `(${details})` : '',
+    s.rating ? `rated ${s.rating}/5` : '',
+    Array.isArray(s.feelings) && s.feelings.length ? `felt: ${s.feelings.join(', ')}` : '',
+    s.would_buy_again === true ? 'would buy again' : s.would_buy_again === false ? 'would NOT buy again' : '',
+    s.notes ? `notes: "${String(s.notes).slice(0, 140)}"` : ''
+  ].filter(Boolean);
+  return `- ${parts.join(' — ')}`;
+}
+
+// "CBX L'Orange", "L'Orange" and "cbx l'orange" are the same product to a
+// person; containment on the cleaned slug catches that without a brand table.
+function sameProduct(sessionName: string, subject: string): boolean {
+  const a = strainSlug(sessionName || '', '');
+  const b = strainSlug(subject || '', '');
+  if (a.length < 4 || b.length < 4) return false;
+  // Equal, or one is the other with a brand in front ("cbx-l-orange" vs
+  // "l-orange"). Not plain containment: "blue-dream" must not match
+  // "blue-dream-cookies".
+  return a === b || a.endsWith(`-${b}`) || b.endsWith(`-${a}`);
+}
+
+function formatHistory(rows: HistoryRow[], subject: string): { recent: string | null; sameProduct: string | null } {
+  if (!rows.length) return { recent: null, sameProduct: null };
+  const name = (s: HistoryRow) => s.strain_name || s.reports?.report?.strainName || '';
+  const matches = subject ? rows.filter(s => sameProduct(name(s), subject)) : [];
+  const recent = rows.filter(s => !matches.includes(s)).slice(0, 5);
+  return {
+    recent: recent.length ? recent.map(historyLine).join('\n') : null,
+    sameProduct: matches.length ? matches.slice(0, 6).map(historyLine).join('\n') : null
+  };
 }
 
 const FACTS_TTL_DAYS = 30;
@@ -133,7 +158,7 @@ const SCAN_TTL_DAYS = 30;
 // rubric or upgrading OPENAI_MODEL invalidates every cached scan at once —
 // without it, a better model's answer wouldn't reach anyone holding a cached
 // verdict until the 30-day TTL expired or they manually re-scanned.
-const SCORING_VERSION = '2026-11-17';
+const SCORING_VERSION = '2026-11-18';
 
 // What a score actually depends on: the person's toggles/dial, their learned
 // taste, and the scorer itself. Taste is folded in as a coarse hash that only
@@ -483,19 +508,24 @@ async function runAnalyze(req: NextRequest, form: FormData, emit: Emit, defer: D
 
   // The journal lookup and reading the label don't depend on each other, so
   // they run side by side instead of one after the other.
-  let historyDigest: string | null = null;
+  let historyRows: HistoryRow[] = [];
   let taste: Taste | null = null;
   let identified = '';
   try {
-    [historyDigest, taste, identified] = await Promise.all([
-      buildHistoryDigest(userId),
+    [historyRows, taste, identified] = await Promise.all([
+      fetchHistory(userId),
       loadTaste(userId),
       imageDataUrl ? identifyFromImage(client, model, imageDataUrl, question) : Promise.resolve('')
     ]);
   } catch {
-    historyDigest = null;
+    historyRows = [];
   }
-  const fingerprint = prefsFingerprint(prefs, taste);
+  const history = formatHistory(historyRows, identified || buildSearchSubject(question, ''));
+  const historyDigest = history.recent;
+  // Rating this exact product again must change its verdict, so its own
+  // session outcomes are part of the cache key (unlike general history).
+  const sameProductKey = history.sameProduct ? createHash('sha1').update(history.sameProduct).digest('hex').slice(0, 8) : '';
+  const fingerprint = prefsFingerprint(prefs, taste) + (sameProductKey ? `:${sameProductKey}` : '');
   const learned = tasteSummary(taste);
 
   const system = `You are 1Toke: a sharp, honest budtender friend helping an adult make a fast in-store buying decision. You hype products that genuinely fit this person and you are blunt when something is wrong for them. Never provide medical claims. Return ONLY valid JSON.
@@ -523,6 +553,11 @@ surprise = +5 for something novel.
 Learned taste / session history (when provided): up to +15 when the profile
 leans on terpenes with positive affinity or closely matches a 4-5★ session, up
 to -15 for negative-affinity terpenes or a match to a 1-2★ session.
+SAME-PRODUCT RULE (overrides the arithmetic above): if THIS SAME PRODUCT
+sessions are listed, the person's own outcome with it dominates. Average their
+ratings: 4.5+★ → score at least 88 (Buy); 4★ → at least 78 (Buy); 3★ → 50-65;
+2★ or below → at most 35 (Skip). Toggles that don't match only move it a few
+points within that band. Say in quickTake that they've had it and how it went.
 Head/body lean: the user's preference toggles include headBodyLean, 0-100
 (0 = purely head/cerebral, 100 = purely body/physical). Estimate where this
 product's actual terpene profile falls on the same 0-100 scale (myrcene/
@@ -565,6 +600,9 @@ BUY DECISION BANDS (mechanical, no judgement):
 ${learned ? `
 LEARNED TASTE (built from ALL of this user's rated experiences — this is the session-history signal; weigh it heavily, it beats generic strain lore):
 ${learned}
+` : ''}${history.sameProduct ? `
+THIS SAME PRODUCT — the person has already tried it (newest first). This is the strongest signal there is; see the same-product rule:
+${history.sameProduct}
 ` : ''}${historyDigest ? `
 RECENT SESSIONS (newest first, for naming comparisons):
 ${historyDigest}
@@ -622,7 +660,8 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
 
   const userText = `Analyze this product/strain for a quick in-store buying decision.
 Question or typed label: ${question}
-User preference toggles: ${JSON.stringify(prefs)}
+User tuning:
+${describePrefs(prefs)}
 Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array, labelCheck (string, omit if no meaningful mismatch), facts {terpenes, thcPct, cbdPct, source}.`;
 
   const input: any[] = [{ role: 'system', content: system }];

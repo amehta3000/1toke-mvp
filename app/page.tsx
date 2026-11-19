@@ -19,6 +19,9 @@ import TunedForStrip from './components/TunedForStrip';
 
 const storageKey = '1toke:prefs';
 const onboardedKey = '1toke:onboarded';
+// When this device's copy of the tuning last changed, to settle which side
+// wins when the device and the account disagree.
+const prefsUpdatedKey = '1toke:prefsUpdatedAt';
 const claimedKey = '1toke:claimed';
 
 type IdentityInfo = { configured: boolean; isAnonymous: boolean; email: string | null };
@@ -110,6 +113,14 @@ export default function Page() {
   const [sessionPrefs, setSessionPrefs] = useState<Preferences>(defaultPreferences);
   const [armed, setArmed] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // Tuning is synced to the account so it follows the person across devices,
+  // the home-screen app and preview links. Nothing is pushed until the first
+  // read from the server has settled, or a fresh device would overwrite the
+  // account's profile with blank defaults before it had a chance to load.
+  const prefsSynced = useRef(false);
+  const applyingServerPrefs = useRef(false);
+  const hadLocalPrefs = useRef(false);
+  const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [question, setQuestion] = useState('');
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -229,6 +240,41 @@ export default function Page() {
     });
     loadSavedReports(id);
     loadSessions(id);
+    syncPrefs(id);
+  }
+
+  async function syncPrefs(id: string) {
+    try {
+      const res = await authFetch(`/api/preferences?deviceId=${encodeURIComponent(id)}`);
+      const data = await res.json().catch(() => ({}));
+      const server = data?.preferences;
+      const localAt = safeGet(prefsUpdatedKey);
+      const serverNewer = server && (!hadLocalPrefs.current || !localAt || (data.updatedAt && new Date(data.updatedAt) > new Date(localAt)));
+      if (serverNewer) {
+        applyingServerPrefs.current = true;
+        setPrefs({ ...defaultPreferences, ...server });
+        if (data.updatedAt) safeSet(prefsUpdatedKey, data.updatedAt);
+        // They already set up on another device — don't make them do it again.
+        safeSet(onboardedKey, '1');
+        setShowOnboarding(false);
+      } else if (hadLocalPrefs.current) {
+        // This device has the newer tuning (or the account has none yet, e.g.
+        // someone who tuned before syncing existed): last write wins.
+        pushPrefs(id, JSON.parse(safeGet(storageKey) || '{}'));
+      }
+    } catch { /* offline or not configured: local tuning still works */ }
+    prefsSynced.current = true;
+  }
+
+  function pushPrefs(id: string, value: Preferences) {
+    if (pushTimer.current) clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(() => {
+      authFetch('/api/preferences', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: id, preferences: value })
+      }).catch(() => { /* retried on the next change */ });
+    }, 800);
   }
 
   async function refreshIdentity() {
@@ -240,13 +286,14 @@ export default function Page() {
       isAnonymous: session ? session.user.is_anonymous !== false : true,
       email: session?.user?.email || null
     });
-    await Promise.all([loadSavedReports(deviceId), loadSessions(deviceId)]);
+    await Promise.all([loadSavedReports(deviceId), loadSessions(deviceId), syncPrefs(deviceId)]);
   }
 
   useEffect(() => {
     const saved = safeGet(storageKey);
     const onboarded = safeGet(onboardedKey);
     if (saved) {
+      hadLocalPrefs.current = true;
       try { setPrefs({ ...defaultPreferences, ...JSON.parse(saved) }); } catch { /* ignore corrupt */ }
       // Existing device with a profile: never re-show setup uninvited.
       if (!onboarded) safeSet(onboardedKey, '1');
@@ -257,7 +304,15 @@ export default function Page() {
     setDeviceId(id);
     initIdentity(id);
   }, []);
-  useEffect(() => { safeSet(storageKey, JSON.stringify(prefs)); }, [prefs]);
+  useEffect(() => {
+    safeSet(storageKey, JSON.stringify(prefs));
+    if (!prefsSynced.current) return;
+    if (applyingServerPrefs.current) { applyingServerPrefs.current = false; return; }
+    // A change made here: this device is now the newest copy.
+    safeSet(prefsUpdatedKey, new Date().toISOString());
+    hadLocalPrefs.current = true;
+    if (deviceId) pushPrefs(deviceId, prefs);
+  }, [prefs]);
   useEffect(() => { setSessionPrefs(prefs); }, [prefs]);
 
   // PWA shortcut (manifest.ts) lands here with ?action=scan — can't force the
