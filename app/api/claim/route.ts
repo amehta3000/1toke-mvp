@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { recomputeTaste } from '@/lib/taste';
 import { getSupabaseAdmin } from '@/lib/supabase';
 
 // Reassign journal data to the calling (verified) user. Two sources:
@@ -59,10 +60,31 @@ export async function POST(req: NextRequest) {
     moved += data?.length || 0;
   }
 
+  // Tuning follows the person too. The account keeps its own if it already
+  // has one (that's the profile they set while signed in); otherwise it takes
+  // the most recent one from the identities being merged into it.
+  try {
+    const { data: existing } = await supabase.from('user_preferences').select('id').eq('user_id', newId).limit(1);
+    if (!existing?.length) {
+      const { data: latest } = await supabase.from('user_preferences')
+        .select('preferences, updated_at').in('user_id', sources)
+        .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+      if (latest) {
+        await supabase.from('user_preferences').upsert(
+          { user_id: newId, preferences: (latest as any).preferences, updated_at: (latest as any).updated_at },
+          { onConflict: 'user_id' }
+        );
+      }
+    }
+  } catch { /* preferences are recoverable from the device; never block a claim */ }
+
   // A partial move is not a claim. Reporting it as one lets the client set its
   // "already claimed" flag and never try again, which is how the split becomes
   // permanent. Saying so leaves the flag unset, so the next visit retries.
   if (failed.length) return NextResponse.json({ claimed: false, moved, incomplete: failed });
 
+  // Scans and journal entries just moved onto this account; its taste must
+  // be rebuilt from them, or it would keep the empty profile it started with.
+  if (moved) after(() => recomputeTaste(newId));
   return NextResponse.json({ claimed: true, moved });
 }

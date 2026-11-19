@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createHash } from 'crypto';
 import OpenAI from 'openai';
 import { mockAnalyze } from '@/lib/mock';
@@ -7,6 +7,14 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
 import { REACTION_VALUES } from '@/lib/types';
 import { checkScanLimit, clientIp, recordScan } from '@/lib/rateLimit';
+import {
+  strainSlug,
+  addAliases, addObservation, loadProfile, lookupProductByAlias, parseCannabinoids, parseTerpenes,
+  profileAsContext, profileIsSolid, resolveProduct, type ObservationSource
+} from '@/lib/catalog';
+import { loadTaste, tasteHash, tasteSummary, type Taste } from '@/lib/taste';
+import { SHADOW_SCORER_VERSION, shadowScore } from '@/lib/scorer';
+import { describePrefs } from '@/lib/prefsPrompt';
 
 export const runtime = 'nodejs';
 
@@ -41,44 +49,68 @@ function scrubHallucinations(report: any): any {
   return report;
 }
 
-// Pull the user's recent session logs and turn them into a compact digest the
-// model can actually learn from. This is what makes the app get smarter as
-// the journal grows.
-async function buildHistoryDigest(userId: string | null): Promise<string | null> {
-  if (!userId) return null;
-  const supabase = getSupabaseAdmin();
-  if (!supabase) return null;
+// The few most recent journal entries, by name, so the verdict can say "same
+// profile as L'Orange, which you rated 5/5". The long-term learning lives in
+// the structured taste profile (lib/taste.ts), not in this list — so it's
+// kept short, and it no longer feeds the cache key.
+type HistoryRow = any;
 
+// The journal rows the verdict can draw on. Fetched alongside reading the
+// label (it doesn't depend on it) and formatted once we know what's being
+// scanned, so past sessions of THIS product can be pulled out even when they
+// are older than the most recent few.
+async function fetchHistory(userId: string | null): Promise<HistoryRow[]> {
+  if (!userId) return [];
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return [];
   try {
     const { data, error } = await supabase
       .from('sessions')
       .select('created_at, strain_name, rating, feelings, notes, would_buy_again, reports(report)')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
-      .limit(10);
-    if (error || !data?.length) return null;
-
-    const lines = data.map((s: any) => {
-      const rep = s.reports?.report || {};
-      const details = [
-        toDisplayText(rep.terpenes, ''),
-        toDisplayText(rep.cannabinoids, '')
-      ].filter(Boolean).join('; ');
-      const parts = [
-        s.strain_name || toDisplayText(rep.strainName, 'Unknown strain'),
-        details ? `(${details})` : '',
-        s.rating ? `rated ${s.rating}/5` : '',
-        Array.isArray(s.feelings) && s.feelings.length ? `felt: ${s.feelings.join(', ')}` : '',
-        s.would_buy_again === true ? 'would buy again' : s.would_buy_again === false ? 'would NOT buy again' : '',
-        s.notes ? `notes: "${String(s.notes).slice(0, 140)}"` : ''
-      ].filter(Boolean);
-      return `- ${parts.join(' — ')}`;
-    });
-
-    return lines.join('\n');
+      .limit(60);
+    return error || !data ? [] : data;
   } catch {
-    return null; // History is a bonus, never a blocker.
+    return [];
   }
+}
+
+function historyLine(s: HistoryRow): string {
+  const rep = s.reports?.report || {};
+  const details = [toDisplayText(rep.terpenes, ''), toDisplayText(rep.cannabinoids, '')].filter(Boolean).join('; ');
+  const parts = [
+    s.strain_name || toDisplayText(rep.strainName, 'Unknown strain'),
+    details ? `(${details})` : '',
+    s.rating ? `rated ${s.rating}/5` : '',
+    Array.isArray(s.feelings) && s.feelings.length ? `felt: ${s.feelings.join(', ')}` : '',
+    s.would_buy_again === true ? 'would buy again' : s.would_buy_again === false ? 'would NOT buy again' : '',
+    s.notes ? `notes: "${String(s.notes).slice(0, 140)}"` : ''
+  ].filter(Boolean);
+  return `- ${parts.join(' — ')}`;
+}
+
+// "CBX L'Orange", "L'Orange" and "cbx l'orange" are the same product to a
+// person; containment on the cleaned slug catches that without a brand table.
+function sameProduct(sessionName: string, subject: string): boolean {
+  const a = strainSlug(sessionName || '', '');
+  const b = strainSlug(subject || '', '');
+  if (a.length < 4 || b.length < 4) return false;
+  // Equal, or one is the other with a brand in front ("cbx-l-orange" vs
+  // "l-orange"). Not plain containment: "blue-dream" must not match
+  // "blue-dream-cookies".
+  return a === b || a.endsWith(`-${b}`) || b.endsWith(`-${a}`);
+}
+
+function formatHistory(rows: HistoryRow[], subject: string): { recent: string | null; sameProduct: string | null } {
+  if (!rows.length) return { recent: null, sameProduct: null };
+  const name = (s: HistoryRow) => s.strain_name || s.reports?.report?.strainName || '';
+  const matches = subject ? rows.filter(s => sameProduct(name(s), subject)) : [];
+  const recent = rows.filter(s => !matches.includes(s)).slice(0, 5);
+  return {
+    recent: recent.length ? recent.map(historyLine).join('\n') : null,
+    sameProduct: matches.length ? matches.slice(0, 6).map(historyLine).join('\n') : null
+  };
 }
 
 const FACTS_TTL_DAYS = 30;
@@ -126,18 +158,16 @@ const SCAN_TTL_DAYS = 30;
 // rubric or upgrading OPENAI_MODEL invalidates every cached scan at once —
 // without it, a better model's answer wouldn't reach anyone holding a cached
 // verdict until the 30-day TTL expired or they manually re-scanned.
-const SCORING_VERSION = '2026-10-17';
+const SCORING_VERSION = '2026-11-18';
 
-// What a score actually depends on: the person's toggles/dial, their recent
-// logged sessions (the model weighs those heavily), and the scorer itself.
-// Folding the history digest in means logging a new session correctly
-// invalidates the cached verdict instead of freezing a stale one — the whole
-// pitch is that it learns from the journal, so a cache that outlived that
-// would be a bug.
-function prefsFingerprint(prefs: any, historyDigest: string | null): string {
+// What a score actually depends on: the person's toggles/dial, their learned
+// taste, and the scorer itself. Taste is folded in as a coarse hash that only
+// changes when it meaningfully moves. The old version hashed the raw journal
+// text, so logging any session threw away every cached verdict.
+function prefsFingerprint(prefs: any, taste: Taste | null): string {
   const keys = Object.keys(prefs || {}).sort();
   const normalized = keys.map(k => `${k}=${String(prefs[k])}`).join('|');
-  const history = historyDigest ? createHash('sha1').update(historyDigest).digest('hex') : 'none';
+  const history = tasteHash(taste);
   const scorer = `${SCORING_VERSION}@${process.env.OPENAI_MODEL || 'gpt-4.1-mini'}`;
   return createHash('sha1').update(`${normalized}#${history}#${scorer}`).digest('hex').slice(0, 32);
 }
@@ -369,6 +399,8 @@ function toErrorPayload(err: any) {
 }
 
 type Emit = (event: Record<string, unknown>) => void;
+// Work that should happen after the person has their verdict.
+type Defer = (task: () => Promise<void>) => void;
 type Outcome = { status: number; body: Record<string, unknown> };
 
 // Two response shapes from one pipeline. A client that asks for NDJSON gets
@@ -380,7 +412,7 @@ export async function POST(req: NextRequest) {
   const wantsStream = (req.headers.get('accept') || '').includes('application/x-ndjson');
 
   if (!wantsStream) {
-    const { status, body } = await runAnalyze(req, form, () => {});
+    const { status, body } = await runAnalyze(req, form, () => {}, task => after(task));
     return NextResponse.json(body, { status });
   }
 
@@ -390,9 +422,14 @@ export async function POST(req: NextRequest) {
       const send: Emit = event => {
         try { controller.enqueue(encoder.encode(JSON.stringify(event) + '\n')); } catch { /* client went away */ }
       };
+      // When streaming, deferred work runs here — after the result line has
+      // gone out, before the stream closes — so it lives inside the request
+      // instead of relying on after() being registered mid-stream.
+      const deferred: (() => Promise<void>)[] = [];
       try {
-        const outcome = await runAnalyze(req, form, send);
+        const outcome = await runAnalyze(req, form, send, task => { deferred.push(task); });
         send({ type: 'result', status: outcome.status, body: outcome.body });
+        await Promise.allSettled(deferred.map(task => task()));
       } catch (err) {
         console.error('Analyze stream failed', { err: String(err) });
         send({ type: 'result', status: 500, body: { error: { message: 'Could not analyze right now. Please try again in a minute.', code: 'stream_failed' } } });
@@ -410,7 +447,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-async function runAnalyze(req: NextRequest, form: FormData, emit: Emit): Promise<Outcome> {
+async function runAnalyze(req: NextRequest, form: FormData, emit: Emit, defer: Defer): Promise<Outcome> {
   const question = String(form.get('question') || '');
   const prefs = JSON.parse(String(form.get('preferences') || '{}'));
   const deviceId = String(form.get('deviceId') || '') || null;
@@ -431,8 +468,8 @@ async function runAnalyze(req: NextRequest, form: FormData, emit: Emit): Promise
   // Mock mode still stores and caches when a database is configured, so the
   // scan history and verdict buttons are exercisable locally without keys.
   if (!process.env.OPENAI_API_KEY) {
-    const historyDigest = await buildHistoryDigest(userId);
-    const fingerprint = prefsFingerprint(prefs, historyDigest);
+    const taste = await loadTaste(userId);
+    const fingerprint = prefsFingerprint(prefs, taste);
     const mockSubject = buildSearchSubject(question, '');
     const mockKey = /^unknown(?:\s+strain)?$/i.test(mockSubject) ? '' : cacheKeyFor(mockSubject);
     if (mockKey) emit({ type: 'stage', stage: 'identified', name: mockSubject });
@@ -471,17 +508,25 @@ async function runAnalyze(req: NextRequest, form: FormData, emit: Emit): Promise
 
   // The journal lookup and reading the label don't depend on each other, so
   // they run side by side instead of one after the other.
-  let historyDigest: string | null;
+  let historyRows: HistoryRow[] = [];
+  let taste: Taste | null = null;
   let identified = '';
   try {
-    [historyDigest, identified] = await Promise.all([
-      buildHistoryDigest(userId),
+    [historyRows, taste, identified] = await Promise.all([
+      fetchHistory(userId),
+      loadTaste(userId),
       imageDataUrl ? identifyFromImage(client, model, imageDataUrl, question) : Promise.resolve('')
     ]);
   } catch {
-    historyDigest = null;
+    historyRows = [];
   }
-  const fingerprint = prefsFingerprint(prefs, historyDigest);
+  const history = formatHistory(historyRows, identified || buildSearchSubject(question, ''));
+  const historyDigest = history.recent;
+  // Rating this exact product again must change its verdict, so its own
+  // session outcomes are part of the cache key (unlike general history).
+  const sameProductKey = history.sameProduct ? createHash('sha1').update(history.sameProduct).digest('hex').slice(0, 8) : '';
+  const fingerprint = prefsFingerprint(prefs, taste) + (sameProductKey ? `:${sameProductKey}` : '');
+  const learned = tasteSummary(taste);
 
   const system = `You are 1Toke: a sharp, honest budtender friend helping an adult make a fast in-store buying decision. You hype products that genuinely fit this person and you are blunt when something is wrong for them. Never provide medical claims. Return ONLY valid JSON.
 
@@ -505,8 +550,14 @@ Start at 50, then adjust:
 -10 if the product type is a poor fit for what they described wanting
 Adventure mode: safe = -5 for an unfamiliar profile; explore = no adjustment;
 surprise = +5 for something novel.
-Session history (when provided): up to +15 when the profile closely matches a
-4-5★ logged session, up to -15 when it matches a 1-2★ one.
+Learned taste / session history (when provided): up to +15 when the profile
+leans on terpenes with positive affinity or closely matches a 4-5★ session, up
+to -15 for negative-affinity terpenes or a match to a 1-2★ session.
+SAME-PRODUCT RULE (overrides the arithmetic above): if THIS SAME PRODUCT
+sessions are listed, the person's own outcome with it dominates. Average their
+ratings: 4.5+★ → score at least 88 (Buy); 4★ → at least 78 (Buy); 3★ → 50-65;
+2★ or below → at most 35 (Skip). Toggles that don't match only move it a few
+points within that band. Say in quickTake that they've had it and how it went.
 Head/body lean: the user's preference toggles include headBodyLean, 0-100
 (0 = purely head/cerebral, 100 = purely body/physical). Estimate where this
 product's actual terpene profile falls on the same 0-100 scale (myrcene/
@@ -546,8 +597,14 @@ BUY DECISION BANDS (mechanical, no judgement):
 - 72-100 → "Buy"
 - 45-71  → "Maybe"
 - 0-44   → "Skip"
-${historyDigest ? `
-SESSION HISTORY (this user's real logged outcomes, newest first — weigh heavily; it beats generic strain lore):
+${learned ? `
+LEARNED TASTE (built from ALL of this user's rated experiences — this is the session-history signal; weigh it heavily, it beats generic strain lore):
+${learned}
+` : ''}${history.sameProduct ? `
+THIS SAME PRODUCT — the person has already tried it (newest first). This is the strongest signal there is; see the same-product rule:
+${history.sameProduct}
+` : ''}${historyDigest ? `
+RECENT SESSIONS (newest first, for naming comparisons):
 ${historyDigest}
 
 If the product resembles something they logged (same strain, terpene profile, or potency band), say so explicitly in quickTake or whyThisScore, e.g. "Same limonene-heavy profile as L'Orange, which you rated 5/5." Low-rated history with a similar profile should drag the score down and show up in watchOuts.` : ''}
@@ -594,12 +651,18 @@ When confidence is LOW, set these fields explicitly:
 - buyDecision: "Maybe"
 - missingInfo: List exactly what data you need (e.g., "strain name", "THC percentage from label", "product label photo")
 
-Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array, labelCheck (string, omit if no meaningful mismatch).`;
+STRUCTURED FACTS (for 1Toke's product catalog — be strict, this is stored and reused):
+- facts.terpenes: the terpenes you actually have evidence for, dominant first, as [{"name": "limonene", "pct": 0.82}]. pct is the percentage by weight ONLY if a label, lab result or the search context states it; otherwise null.
+- facts.thcPct / facts.cbdPct: numbers ONLY if read off the label or stated in search context for this product; otherwise null. Never from memory.
+- facts.source: where the terpene/cannabinoid facts came from — "label" (read off the photo), "web" (from the search or catalog context), "typical" (strain-level knowledge, TYPICAL tier), or "none".
+
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids (or ""), terpenes array, matchScore 0-100, buyDecision, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence, missingInfo array, labelCheck (string, omit if no meaningful mismatch), facts object.`;
 
   const userText = `Analyze this product/strain for a quick in-store buying decision.
 Question or typed label: ${question}
-User preference toggles: ${JSON.stringify(prefs)}
-Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array, labelCheck (string, omit if no meaningful mismatch).`;
+User tuning:
+${describePrefs(prefs)}
+Return JSON with: strainName, brand, brandNotes, strainType, productType, cannabinoids, terpenes array, matchScore 0-100, buyDecision Buy|Maybe|Skip, quickTake, whyThisScore, expectedEffects array, watchOuts array, bestFor array, dosingGuidance, confidence low|medium|high, missingInfo array, labelCheck (string, omit if no meaningful mismatch), facts {terpenes, thcPct, cbdPct, source}.`;
 
   const input: any[] = [{ role: 'system', content: system }];
   input.push({
@@ -655,12 +718,25 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
     // From here on this is a fresh, paid scan — count it.
     await recordScan(userId, ip);
 
+    // The catalog first: a product with label or web readings on file doesn't
+    // need the web searched again. The catalog record goes to the model as its
+    // evidence, labelled with where it came from.
+    let catalogHit = false;
+    if (hasSubject && !force) {
+      const knownId = await lookupProductByAlias(productKey);
+      const profile = knownId ? await loadProfile(knownId) : null;
+      if (profile && profileIsSolid(profile)) {
+        searchContext = profileAsContext(profile);
+        catalogHit = true;
+      }
+    }
+
     if (hasSubject) {
       searchLabel = searchSubject;
       searchTerm = `${searchSubject} cannabis strain dominant terpene profile THC CBD percentage effects`;
       searchAttempted = true;
 
-      searchContext = await getCachedFacts(productKey);
+      if (!searchContext) searchContext = await getCachedFacts(productKey);
       searchCached = Boolean(searchContext);
 
       if (!searchContext && process.env.TAVILY_API_KEY) {
@@ -694,6 +770,20 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
       ? null
       : await saveScan(userId, productKey, fingerprint, report, priorReaction);
 
+    // Catalog and shadow-score bookkeeping happens after the response is sent:
+    // it makes the next scan faster and gives the shadow scorer something to
+    // be measured on, but nobody should wait for it now.
+    if (report.confidence !== 'low') {
+      const facts = (parsed as any)?.facts || {};
+      defer(() => recordCatalog({
+        reportId, report, facts, prefs, taste,
+        aliasKeys: [productKey, cacheKeyFor(`${report.strainName} ${report.brand || ''}`)],
+        hadImage: Boolean(imageDataUrl),
+        catalogHit,
+        hadWebContext: Boolean(searchContext) && !catalogHit
+      }));
+    }
+
     return { status: 200, body: { report, reportId, reaction: priorReaction, mock: false, fromCache: false, searchAttempted, searchTerm, searchLabel, searchFound, searchCached, usedHistory: Boolean(historyDigest) } };
   } catch (err: any) {
     const payload = toErrorPayload(err);
@@ -704,5 +794,56 @@ Return JSON with: strainName, brand, brandNotes, strainType, productType, cannab
       hint: payload.error.hint
     });
     return { status: payload.status, body: { error: payload.error } };
+  }
+}
+
+// Turn a finished scan into catalog knowledge and a shadow score.
+//
+// The source of each observation is decided here, not trusted blindly from the
+// model: "label" needs an actual photo, "web" needs real search context, and a
+// scan whose evidence WAS the catalog record adds nothing new — recording it
+// would let the catalog cite itself and harden whatever it already says.
+async function recordCatalog(args: {
+  reportId: string | null; report: any; facts: any; prefs: any; taste: Taste | null;
+  aliasKeys: string[]; hadImage: boolean; catalogHit: boolean; hadWebContext: boolean;
+}) {
+  try {
+    const { report, facts } = args;
+    const productId = await resolveProduct({ brand: report.brand || '', strain: report.strainName || '', productType: report.productType || '' });
+    if (!productId) return;
+    await addAliases(productId, args.aliasKeys);
+
+    const claimed = String(facts?.source || '').toLowerCase();
+    let source: ObservationSource | null = null;
+    if (claimed === 'label' && args.hadImage) source = 'label';
+    else if (claimed === 'web' && args.hadWebContext) source = 'web';
+    else if (claimed === 'typical' && !args.catalogHit) source = 'typical';
+
+    if (source) {
+      const terpenes = parseTerpenes(Array.isArray(facts?.terpenes) && facts.terpenes.length ? facts.terpenes : report.terpenes);
+      const num = (v: unknown) => { const n = Number(v); return v !== null && v !== '' && Number.isFinite(n) && n >= 0 && n <= 100 ? n : null; };
+      const fromText = parseCannabinoids(report.cannabinoids);
+      await addObservation(productId, {
+        source,
+        terpenes,
+        // Potency only from a label or the web, never from memory.
+        thc_pct: source === 'typical' ? null : num(facts?.thcPct) ?? fromText.thc,
+        cbd_pct: source === 'typical' ? null : num(facts?.cbdPct) ?? fromText.cbd,
+        strain_type: report.strainType || null
+      });
+    }
+
+    const profile = await loadProfile(productId);
+    const shadow = shadowScore(profile, args.prefs || {}, args.taste);
+    const supabase = getSupabaseAdmin();
+    if (supabase && args.reportId) {
+      await supabase.from('reports').update({
+        product_id: productId,
+        shadow_score: shadow?.score ?? null,
+        shadow_version: shadow ? SHADOW_SCORER_VERSION : null
+      }).eq('id', args.reportId);
+    }
+  } catch (err) {
+    console.warn('Catalog bookkeeping failed', { err: String(err) });
   }
 }
