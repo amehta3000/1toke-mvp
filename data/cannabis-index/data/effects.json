@@ -1,0 +1,43 @@
+{
+  "_note": "Effects are user-reported experiences aggregated from consumer reviews and community data, not medical claims.",
+  "feelings": [
+    {"id": "relaxed", "label": "Relaxed", "sentiment": "positive"},
+    {"id": "happy", "label": "Happy", "sentiment": "positive"},
+    {"id": "euphoric", "label": "Euphoric", "sentiment": "positive"},
+    {"id": "uplifted", "label": "Uplifted", "sentiment": "positive"},
+    {"id": "creative", "label": "Creative", "sentiment": "positive"},
+    {"id": "energetic", "label": "Energetic", "sentiment": "positive"},
+    {"id": "focused", "label": "Focused", "sentiment": "positive"},
+    {"id": "calm", "label": "Calm", "sentiment": "positive"},
+    {"id": "sleepy", "label": "Sleepy", "sentiment": "neutral"},
+    {"id": "hungry", "label": "Hungry", "sentiment": "neutral"},
+    {"id": "talkative", "label": "Talkative", "sentiment": "positive"},
+    {"id": "giggly", "label": "Giggly", "sentiment": "positive"},
+    {"id": "tingly", "label": "Tingly", "sentiment": "positive"},
+    {"id": "aroused", "label": "Aroused", "sentiment": "positive"}
+  ],
+  "negatives": [
+    {"id": "dry_mouth", "label": "Dry mouth"},
+    {"id": "dry_eyes", "label": "Dry eyes"},
+    {"id": "paranoid", "label": "Paranoid"},
+    {"id": "anxious", "label": "Anxious"},
+    {"id": "dizzy", "label": "Dizzy"},
+    {"id": "headache", "label": "Headache"},
+    {"id": "couchlock", "label": "Couch-lock"},
+    {"id": "racy", "label": "Racy / jittery"},
+    {"id": "foggy", "label": "Foggy / forgetful"}
+  ],
+  "helps_with": [
+    {"id": "stress", "label": "Stress"},
+    {"id": "anxiety", "label": "Anxiety"},
+    {"id": "pain", "label": "Pain"},
+    {"id": "insomnia", "label": "Insomnia"},
+    {"id": "depression", "label": "Low mood"},
+    {"id": "appetite_loss", "label": "Appetite loss"},
+    {"id": "nausea", "label": "Nausea"},
+    {"id": "inflammation", "label": "Inflammation"},
+    {"id": "fatigue", "label": "Fatigue"},
+    {"id": "headaches", "label": "Headaches"},
+    {"id": "muscle_spasms", "label": "Muscle spasms"}
+  ]
+}

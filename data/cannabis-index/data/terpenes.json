@@ -1,0 +1,128 @@
+[
+  {
+    "id": "myrcene", "name": "Myrcene", "aliases": ["beta-myrcene", "β-myrcene"],
+    "aroma": ["earthy", "musky", "clove", "ripe fruit"],
+    "also_found_in": ["mango", "hops", "lemongrass", "thyme"],
+    "commonly_associated_effects": ["relaxed", "sleepy", "calm"],
+    "pros": ["Most common cannabis terpene", "Associated with body relaxation", "Preclinical research on sedative and anti-inflammatory activity"],
+    "cons": ["Linked by users to couch-lock at high levels", "Can feel heavy for daytime use"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "limonene", "name": "Limonene", "aliases": ["d-limonene"],
+    "aroma": ["citrus", "lemon", "orange"],
+    "also_found_in": ["citrus peel", "juniper", "peppermint"],
+    "commonly_associated_effects": ["uplifted", "happy", "focused"],
+    "pros": ["Bright, mood-lifting profile", "Studied for anti-stress and anti-anxiety effects in animals and small human trials"],
+    "cons": ["Some users report raciness when paired with high THC", "Can irritate throat when combusted"],
+    "research_level": "early clinical"
+  },
+  {
+    "id": "caryophyllene", "name": "Beta-Caryophyllene", "aliases": ["β-caryophyllene", "BCP"],
+    "aroma": ["peppery", "spicy", "woody"],
+    "also_found_in": ["black pepper", "cloves", "cinnamon", "oregano"],
+    "commonly_associated_effects": ["relaxed", "calm"],
+    "pros": ["Only common terpene known to bind CB2 receptors", "Studied for anti-inflammatory and pain-relief potential"],
+    "cons": ["Harsh, peppery smoke for some", "Effects subtle on their own"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "pinene", "name": "Pinene", "aliases": ["alpha-pinene", "α-pinene", "beta-pinene"],
+    "aroma": ["pine", "fresh", "herbal"],
+    "also_found_in": ["pine needles", "rosemary", "basil", "dill"],
+    "commonly_associated_effects": ["focused", "energetic", "creative"],
+    "pros": ["Associated with alertness", "Theorized to offset THC short-term memory effects (limited evidence)", "Bronchodilator activity in early studies"],
+    "cons": ["Sharp aroma not for everyone", "Can feel stimulating late at night"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "linalool", "name": "Linalool", "aliases": [],
+    "aroma": ["floral", "lavender", "sweet"],
+    "also_found_in": ["lavender", "coriander", "birch"],
+    "commonly_associated_effects": ["calm", "relaxed", "sleepy"],
+    "pros": ["Calming floral profile", "Studied for anxiolytic and sedative effects (mostly aromatherapy and animal studies)"],
+    "cons": ["Usually present at low levels", "Sedation may be unwanted during the day"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "humulene", "name": "Humulene", "aliases": ["alpha-humulene", "α-caryophyllene"],
+    "aroma": ["woody", "earthy", "hoppy"],
+    "also_found_in": ["hops", "sage", "ginseng"],
+    "commonly_associated_effects": ["relaxed", "focused"],
+    "pros": ["Studied for anti-inflammatory properties", "Anecdotally linked to appetite suppression"],
+    "cons": ["Appetite suppression undesirable for some medical users", "Earthy taste can be bitter"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "terpinolene", "name": "Terpinolene", "aliases": [],
+    "aroma": ["fresh", "floral", "herbal", "piney", "citrus"],
+    "also_found_in": ["apples", "lilacs", "tea tree", "cumin"],
+    "commonly_associated_effects": ["energetic", "uplifted", "creative"],
+    "pros": ["Signature of many classic sativas (Jack Herer, Durban Poison)", "Complex, bright aroma"],
+    "cons": ["Users of terpinolene-dominant strains report raciness", "Less common, so harder to find"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "ocimene", "name": "Ocimene", "aliases": ["beta-ocimene"],
+    "aroma": ["sweet", "herbal", "woody", "tropical"],
+    "also_found_in": ["mint", "parsley", "basil", "orchids"],
+    "commonly_associated_effects": ["uplifted", "energetic"],
+    "pros": ["Sweet herbal aroma", "Studied for antiviral and anti-inflammatory properties"],
+    "cons": ["Rarely dominant", "Very volatile, fades quickly with poor storage"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "bisabolol", "name": "Bisabolol", "aliases": ["alpha-bisabolol", "levomenol"],
+    "aroma": ["floral", "chamomile", "honey"],
+    "also_found_in": ["chamomile", "candeia tree"],
+    "commonly_associated_effects": ["calm", "relaxed"],
+    "pros": ["Gentle, soothing profile", "Widely used in skincare for anti-irritant properties"],
+    "cons": ["Trace amounts in most cannabis"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "nerolidol", "name": "Nerolidol", "aliases": ["trans-nerolidol"],
+    "aroma": ["woody", "floral", "citrus", "bark"],
+    "also_found_in": ["jasmine", "tea tree", "lemongrass", "ginger"],
+    "commonly_associated_effects": ["relaxed", "sleepy"],
+    "pros": ["Studied for sedative and antifungal properties"],
+    "cons": ["Usually a minor terpene", "Sedating"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "eucalyptol", "name": "Eucalyptol", "aliases": ["1,8-cineole"],
+    "aroma": ["minty", "cooling", "camphor"],
+    "also_found_in": ["eucalyptus", "rosemary", "bay leaves"],
+    "commonly_associated_effects": ["focused", "uplifted"],
+    "pros": ["Cooling, clearing sensation", "Studied for anti-inflammatory effects in airway conditions"],
+    "cons": ["Medicinal taste", "Typically trace levels"],
+    "research_level": "clinical (non-cannabis uses)"
+  },
+  {
+    "id": "geraniol", "name": "Geraniol", "aliases": [],
+    "aroma": ["rose", "floral", "citrus"],
+    "also_found_in": ["roses", "geraniums", "lemongrass"],
+    "commonly_associated_effects": ["calm", "relaxed"],
+    "pros": ["Pleasant sweet floral note", "Studied for antioxidant activity"],
+    "cons": ["Minor terpene, limited cannabis-specific data"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "valencene", "name": "Valencene", "aliases": [],
+    "aroma": ["sweet orange", "citrus", "woody"],
+    "also_found_in": ["Valencia oranges", "grapefruit", "nectarines"],
+    "commonly_associated_effects": ["uplifted", "happy"],
+    "pros": ["Sweet citrus aroma", "Studied as an insect repellent and anti-inflammatory"],
+    "cons": ["Trace levels in most cultivars"],
+    "research_level": "preclinical"
+  },
+  {
+    "id": "guaiol", "name": "Guaiol", "aliases": [],
+    "aroma": ["pine", "woody", "rose"],
+    "also_found_in": ["guaiacum", "cypress pine"],
+    "commonly_associated_effects": ["relaxed"],
+    "pros": ["Studied for antimicrobial properties"],
+    "cons": ["Minor terpene, limited data"],
+    "research_level": "preclinical"
+  }
+]
