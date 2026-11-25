@@ -1,0 +1,17 @@
+[
+  {"id":"cookies","name":"Cookies","hq_state":"CA","website":"https://cookies.co","categories":["flower","pre-rolls","vapes","apparel"],"notable_strains":["gsc","gelato"],"notes":"Founded by Berner and the Cookie Fam; multistate and international footprint."},
+  {"id":"stiiizy","name":"STIIIZY","hq_state":"CA","website":"https://www.stiiizy.com","categories":["vapes","flower","edibles","pre-rolls"],"notable_strains":[],"notes":"Known for proprietary vape pod system."},
+  {"id":"raw-garden","name":"Raw Garden","hq_state":"CA","website":"https://rawgarden.farm","categories":["vapes","concentrates"],"notable_strains":[],"notes":"Clean-green certified; known for live resin 'refined live resin' carts."},
+  {"id":"jeeter","name":"Jeeter","hq_state":"CA","website":"https://www.jeeter.com","categories":["pre-rolls","infused pre-rolls"],"notable_strains":[],"notes":"Top-selling infused pre-roll brand (Baby Jeeter)."},
+  {"id":"wyld","name":"Wyld","hq_state":"OR","website":"https://wyldcanna.com","categories":["edibles"],"notable_strains":[],"notes":"Fruit gummies with real-fruit flavors; multistate."},
+  {"id":"kiva","name":"Kiva Confections","hq_state":"CA","website":"https://www.kivaconfections.com","categories":["edibles"],"notable_strains":[],"notes":"Makers of Kiva bars, Camino gummies, Petra mints, Lost Farm."},
+  {"id":"wana","name":"Wana Brands","hq_state":"CO","website":"https://www.wanabrands.com","categories":["edibles"],"notable_strains":[],"notes":"Gummies including fast-acting and extended-release lines."},
+  {"id":"papa-barkley","name":"Papa & Barkley","hq_state":"CA","website":"https://www.papaandbarkley.com","categories":["topicals","tinctures","capsules"],"notable_strains":[],"notes":"Wellness-focused balms and tinctures."},
+  {"id":"lowell-farms","name":"Lowell Farms","hq_state":"CA","website":"https://lowellfarms.com","categories":["pre-rolls","flower"],"notable_strains":[],"notes":"Known for Lowell Smokes pre-roll packs."},
+  {"id":"alien-labs","name":"Alien Labs","hq_state":"CA","website":null,"categories":["flower"],"notable_strains":["mac"],"notes":"Premium exotic flower genetics."},
+  {"id":"connected","name":"Connected Cannabis Co.","hq_state":"CA","website":null,"categories":["flower","vapes"],"notable_strains":["gelato","biscotti"],"notes":"Premium indoor flower; associated with Gelato/Biscotti genetics."},
+  {"id":"cresco","name":"Cresco","hq_state":"IL","website":null,"categories":["flower","vapes","concentrates"],"notable_strains":[],"notes":"Multistate operator (Cresco Labs)."},
+  {"id":"rythm","name":"Rythm","hq_state":"NY","website":null,"categories":["flower","vapes","pre-rolls"],"notable_strains":[],"notes":"Green Thumb Industries flagship brand."},
+  {"id":"select","name":"Select","hq_state":null,"website":null,"categories":["vapes","edibles"],"notable_strains":[],"notes":"Curaleaf-owned vape and edible brand."},
+  {"id":"old-pal","name":"Old Pal","hq_state":"CA","website":null,"categories":["flower","pre-rolls"],"notable_strains":[],"notes":"Value-priced flower brand."}
+]
