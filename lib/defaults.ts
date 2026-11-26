@@ -41,7 +41,8 @@ export const defaultPreferences: Preferences = {
   tolerance: 'medium',
   mode: 'safe',
   // Balanced/neutral — same "no assumed vibe" philosophy as everything else here.
-  headBodyLean: 50
+  headBodyLean: 50,
+  note: ''
 };
 
 export const chipGroups = [

@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase';
 import { resolveUserId } from '@/lib/serverAuth';
 import { defaultPreferences } from '@/lib/defaults';
 import { isMissingMigration } from '@/lib/pgErrors';
+import { cleanNote } from '@/lib/prefNote';
 
 // Tuning used to live only in the browser's localStorage, which is scoped to
 // one browser on one domain. So the journal followed a signed-in person to a
@@ -21,6 +22,7 @@ function sanitize(input: any): Record<string, unknown> | null {
     else if (typeof def === 'number' && typeof v === 'number' && Number.isFinite(v)) out[key] = Math.max(0, Math.min(100, v));
     else if (key === 'tolerance' && ['low', 'medium', 'high'].includes(v)) out[key] = v;
     else if (key === 'mode' && ['safe', 'explore', 'surprise'].includes(v)) out[key] = v;
+    else if (key === 'note' && typeof v === 'string') out[key] = cleanNote(v);
   }
   return Object.keys(out).length ? out : null;
 }
