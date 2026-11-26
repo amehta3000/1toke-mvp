@@ -15,6 +15,9 @@ export type Preferences = Record<PreferenceKey, boolean> & {
   // product's actual terpene-derived lean, independent of the printed
   // Indica/Sativa/Hybrid label — that label is often marketing, not chemistry.
   headBodyLean: number;
+  // "Anything else?" in the person's own words. Read by the model only;
+  // see lib/prefNote.ts.
+  note: string;
 };
 
 export type StrainReport = {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { chipGroups, coreKeys, labels, toleranceHints, modeHints, leanReadoutText } from '@/lib/defaults';
 import { Preferences } from '@/lib/types';
+import PrefNoteInput from './PrefNoteInput';
 
 export default function ProfileTab({ prefs, setPrefs, onReplaySetup }: {
   prefs: Preferences;
@@ -47,6 +48,8 @@ export default function ProfileTab({ prefs, setPrefs, onReplaySetup }: {
         </>}
       </div>;
     })}
+
+    <PrefNoteInput prefs={prefs} setPrefs={setPrefs} />
 
     <h3>Head or body?</h3>
     <input type="range" min="0" max="100" value={prefs.headBodyLean} onChange={e => setPrefs(p => ({ ...p, headBodyLean: Number(e.target.value) }))} />

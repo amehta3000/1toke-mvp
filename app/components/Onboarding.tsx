@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { chipGroups, coreKeys, labels, toleranceHints, modeHints, leanReadoutText } from '@/lib/defaults';
 import { Preferences } from '@/lib/types';
+import PrefNoteInput from './PrefNoteInput';
 
 const steps = [
   {
@@ -71,7 +72,10 @@ export default function Onboarding({ prefs, setPrefs, onDone }: {
       <h2>{steps[step].title}</h2>
       <p>{steps[step].blurb}</p>
 
-      {step === 0 && chipRow(chipGroups[0].keys, 'want')}
+      {step === 0 && <>
+        {chipRow(chipGroups[0].keys, 'want')}
+        <PrefNoteInput prefs={prefs} setPrefs={setPrefs} />
+      </>}
 
       {step === 1 && <div className="stack">
         <h3>Steer me away from</h3>
